@@ -23,7 +23,7 @@ func (c *Client) get(path string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 		return fmt.Errorf("%s %d: %s", path, resp.StatusCode, string(b))
@@ -47,7 +47,7 @@ func (c *Client) Chat(prompt, mode, agent, workdir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 		return "", fmt.Errorf("chat %d: %s", resp.StatusCode, string(b))

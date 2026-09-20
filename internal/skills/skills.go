@@ -178,9 +178,9 @@ func (m *Manager) Export(name, destZip string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	w := zip.NewWriter(f)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	return filepath.WalkDir(s.Path, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -208,7 +208,7 @@ func (m *Manager) Import(zipPath string) (Skill, error) {
 	if err != nil {
 		return Skill{}, err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	base := strings.TrimSuffix(filepath.Base(zipPath), ".zip")
 	dest := filepath.Join(m.dir, base)
 	if _, err := os.Stat(dest); err == nil {

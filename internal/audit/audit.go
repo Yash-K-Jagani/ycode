@@ -72,7 +72,7 @@ func (s *Store) Append(event string, fields map[string]any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = f.WriteString(line)
 	return err
 }

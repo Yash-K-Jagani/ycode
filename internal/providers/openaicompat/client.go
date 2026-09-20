@@ -41,7 +41,7 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var v struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -72,7 +72,7 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 	if err != nil {
 		return apitypes.StreamChunk{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return apitypes.StreamChunk{}, fmt.Errorf("%s %d: %s", c.Name_, resp.StatusCode, string(b))

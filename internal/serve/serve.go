@@ -26,7 +26,7 @@ func New() *Server {
 	s.mux.HandleFunc("/v1/status", s.status)
 	s.mux.HandleFunc("/v1/chat", s.chat)
 	s.mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	})
 	return s
 }

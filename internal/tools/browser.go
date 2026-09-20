@@ -60,7 +60,7 @@ func (t *BrowserTool) Run(ctx context.Context, args json.RawMessage) (string, er
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("fetch %d for %s", resp.StatusCode, a.URL)
 	}

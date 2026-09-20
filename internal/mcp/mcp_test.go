@@ -74,10 +74,10 @@ func fakeServer(t *testing.T, r *os.File, w *os.File) {
 func TestClientProtocol(t *testing.T) {
 	c2sR, c2sW, _ := os.Pipe() // client writes, server reads
 	s2cR, s2cW, _ := os.Pipe() // server writes, client reads
-	defer c2sR.Close()
-	defer c2sW.Close()
-	defer s2cR.Close()
-	defer s2cW.Close()
+	defer func() { _ = c2sR.Close() }()
+	defer func() { _ = c2sW.Close() }()
+	defer func() { _ = s2cR.Close() }()
+	defer func() { _ = s2cW.Close() }()
 	go fakeServer(t, c2sR, s2cW)
 
 	c := &Client{stdin: *json.NewEncoder(c2sW)}

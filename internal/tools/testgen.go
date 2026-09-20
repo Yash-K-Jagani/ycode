@@ -94,8 +94,5 @@ func hasPy(d string) bool {
 			return true
 		}
 	}
-	if strings.HasSuffix(d, ".py") {
-		return true
-	}
-	return false
+	return strings.HasSuffix(d, ".py")
 }

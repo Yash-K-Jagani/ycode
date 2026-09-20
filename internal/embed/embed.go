@@ -36,7 +36,7 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float64, error
 	if err != nil {
 		return nil, fmt.Errorf("embed: %w (is ollama up? pull %s)", err, c.Model)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
 		return nil, fmt.Errorf("embed %d: %s (try: ollama pull %s)", resp.StatusCode, string(b), c.Model)

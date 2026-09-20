@@ -73,7 +73,7 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 		ctx = tools.WithReadOnly(ctx)
 	}
 	hookset.Fire(ctx, hooks.OnRequest, map[string]string{"mode": string(o.Mode), "workdir": o.Workdir, "headless": "true"})
-	var log io.Writer = o.Stderr
+	log := o.Stderr
 	if len(allowed) == 0 {
 		full, _, err := r.StreamWithFallback(ctx, msgs, io.Discard)
 		if err != nil {
@@ -93,7 +93,7 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 		if err != nil {
 			status = "ERR " + err.Error()
 		}
-		fmt.Fprintf(log, "[tool %s] %s\n", name, status)
+		_, _ = fmt.Fprintf(log, "[tool %s] %s\n", name, status)
 	})
 	_ = log
 	if err != nil && res.Text == "" {

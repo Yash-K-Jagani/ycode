@@ -63,7 +63,6 @@ type connectFlow struct {
 	provs    []connectProv
 	keyInput textinput.Model
 	key      string
-	host     string
 	models   []apitypes.ModelInfo
 	modelIdx int
 	note     string

@@ -77,7 +77,7 @@ func gitClone(ctx context.Context, workdir, url, dest string) (string, error) {
 	if !httpURLRe.MatchString(url) {
 		return "", fmt.Errorf("refusing to clone non-http(s) URL: %q", url)
 	}
-	if !(strings.Contains(url, "github.com") || strings.Contains(url, "gitlab.com")) {
+	if !strings.Contains(url, "github.com") && !strings.Contains(url, "gitlab.com") {
 		return "", fmt.Errorf("only github.com/gitlab.com URLs allowed: %q", url)
 	}
 	if dest == "" {
@@ -137,7 +137,7 @@ func ghAPI(ctx context.Context, a struct {
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("github %d: %s", resp.StatusCode, truncate(string(data), 500))

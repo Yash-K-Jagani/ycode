@@ -206,7 +206,7 @@ func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, h
 		if err == nil {
 			_, _ = tmp.Write([]byte(c.Args))
 			_ = tmp.Close()
-			defer os.Remove(tmp.Name())
+			defer func() { _ = os.Remove(tmp.Name()) }()
 			if err := hk.Gate(ctx, c.Name, tmp.Name(), map[string]string{"mode": ""}); err != nil {
 				return "", err
 			}

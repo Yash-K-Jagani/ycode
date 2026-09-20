@@ -34,7 +34,7 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ollama not reachable at %s: %w", c.Host, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var v struct {
 		Models []struct {
 			Name string `json:"name"`
@@ -59,7 +59,7 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 	if err != nil {
 		return apitypes.StreamChunk{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
 		return apitypes.StreamChunk{}, fmt.Errorf("ollama %d: %s", resp.StatusCode, string(b))

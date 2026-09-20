@@ -1,10 +1,13 @@
+version: "2"
 linters:
   enable:
     - govet
     - ineffassign
     - staticcheck
     - unused
-    - gofmt
     - misspell
+formatters:
+  enable:
+    - gofmt
 run:
   timeout: 5m

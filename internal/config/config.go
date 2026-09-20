@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/spf13/viper"
 )
 
@@ -49,13 +50,32 @@ func Load() (Config, error) {
 	v.AutomaticEnv()
 	_ = v.ReadInConfig()
 	_ = v.Unmarshal(&cfg)
-	cfg.GeminiAPIKey = os.Getenv(cfg.GeminiKeyEnv)
-	cfg.OpenRouterKey = os.Getenv(cfg.OpenRouterKeyEnv)
-	cfg.GroqKey = os.Getenv(cfg.GroqKeyEnv)
+	cfg.GeminiAPIKey = firstNonEmpty(os.Getenv(cfg.GeminiKeyEnv), keyringGet(cfg.GeminiKeyEnv))
+	cfg.OpenRouterKey = firstNonEmpty(os.Getenv(cfg.OpenRouterKeyEnv), keyringGet(cfg.OpenRouterKeyEnv))
+	cfg.GroqKey = firstNonEmpty(os.Getenv(cfg.GroqKeyEnv), keyringGet(cfg.GroqKeyEnv))
 	if h := os.Getenv("OLLAMA_HOST"); h != "" {
 		cfg.OllamaHost = h
 	}
 	return cfg, nil
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func keyringGet(account string) string {
+	if account == "" {
+		return ""
+	}
+	if secret, ok := keys.Get(account); ok {
+		return secret
+	}
+	return ""
 }
 
 func (c Config) Save() error {

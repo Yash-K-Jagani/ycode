@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/gemini"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/groq"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
@@ -26,6 +27,7 @@ const (
 	cStepKey
 	cStepFetch
 	cStepModels
+	cStepSave
 )
 
 type connectProv struct {
@@ -50,6 +52,7 @@ type connectResult struct {
 	Key      string
 	KeyEnv   string
 	Host     string
+	SaveKey  bool
 }
 
 type fetchModelsMsg struct {
@@ -180,7 +183,7 @@ func (m *Model) updateConnect(msg tea.Msg) tea.Cmd {
 			return m.connectAdvance()
 		}
 	}
-	if c.step == cStepKey {
+	if c.step == cStepKey || c.step == cStepSave {
 		var cmd tea.Cmd
 		c.keyInput, cmd = c.keyInput.Update(msg)
 		return cmd
@@ -224,6 +227,19 @@ func (m *Model) connectAdvance() tea.Cmd {
 		p := c.provs[c.provIdx]
 		chosen := c.models[c.modelIdx%len(c.models)]
 		c.result = connectResult{Provider: p.ID, Model: chosen.ID, Key: c.key, KeyEnv: p.KeyEnv, Host: c.key}
+		if p.IsHost {
+			c.done = true
+			return nil
+		}
+		c.keyInput.SetValue("")
+		c.keyInput.Placeholder = "Save key to OS keyring? (Y/n)"
+		c.keyInput.EchoMode = textinput.EchoNormal
+		c.step = cStepSave
+		c.keyInput.Focus()
+		return textinput.Blink
+	case cStepSave:
+		ans := strings.ToLower(strings.TrimSpace(c.keyInput.Value()))
+		c.result.SaveKey = ans == "" || ans == "y" || ans == "yes"
 		c.done = true
 		return nil
 	}
@@ -250,7 +266,17 @@ func (m *Model) applyConnect(r connectResult) string {
 	if r.Provider == "ollama" {
 		return out + " (host " + m.cfg.OllamaHost + ")"
 	}
-	return out + " (key " + maskKey(r.Key) + " active for this session - persist with: export " + r.KeyEnv + "=...)"
+	extra := "key " + maskKey(r.Key) + " active for this session"
+	if r.SaveKey {
+		if err := keys.Set(r.KeyEnv, r.Key); err != nil {
+			extra += " - keyring save failed (" + err.Error() + "), persist with: export " + r.KeyEnv + "=..."
+		} else {
+			extra += " - saved to OS keyring"
+		}
+	} else {
+		extra += " - persist with: export " + r.KeyEnv + "=..."
+	}
+	return out + " (" + extra + ")"
 }
 
 func (c *connectFlow) view(width int, accent lipgloss.Color) string {
@@ -261,7 +287,7 @@ func (c *connectFlow) view(width int, accent lipgloss.Color) string {
 		width = 64
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Connect provider")
-	steps := []string{"provider", "key", "models"}
+	steps := []string{"provider", "key", "models", "save"}
 	var crumbs []string
 	for i, s := range steps {
 		if connectStep(i) == c.step || (c.step == cStepFetch && i == 2) {
@@ -297,6 +323,14 @@ func (c *connectFlow) view(width int, accent lipgloss.Color) string {
 		}
 	case cStepFetch:
 		b.WriteString(dim.Render("contacting provider…") + "\n")
+	case cStepSave:
+		fmt.Fprintf(&b, "%s\n%s\n",
+			dim.Render(c.result.Provider+" / "+c.result.Model+" · key "+maskKey(c.result.Key)),
+			"Save this key to the OS keyring?")
+		b.WriteString(c.keyInput.View() + "\n")
+		if c.err != "" {
+			b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(c.err) + "\n")
+		}
 	case cStepModels:
 		if c.note != "" {
 			b.WriteString(dim.Render(c.note) + "\n")

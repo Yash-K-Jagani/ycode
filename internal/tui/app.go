@@ -632,6 +632,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+d":
 			_ = m.sess.Save()
+			m.pluginLoader.Close()
 			return m, tea.Quit
 		case "ctrl+c", "esc":
 			if m.busy {
@@ -640,6 +641,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			_ = m.sess.Save()
+			m.pluginLoader.Close()
 			return m, tea.Quit
 		case "ctrl+n":
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)

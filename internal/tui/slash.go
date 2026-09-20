@@ -546,9 +546,9 @@ func slashRegistry() map[string]slashHandler {
 			if len(f) > 0 && f[0] == "reload" {
 				m.registerPluginTools()
 			}
-			names := m.pluginLoader.Names()
+			names := m.pluginLoader.Describe()
 			if len(names) == 0 {
-				return "No plugins. Add ~/.ycode/plugins/<name>/plugin.json {name, description, command}. Then /plugins reload.", nil
+				return "No plugins. Add ~/.ycode/plugins/<name>/plugin.json {name, description, command} or install one: /plugins install <git-url|owner/repo|local-dir|.wasm>. Then /plugins reload.", nil
 			}
 			return fmt.Sprintf("Plugins (%d):\n- %s\nUsable in build mode as tools.", len(names), strings.Join(names, "\n- ")), nil
 		},

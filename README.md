@@ -12,7 +12,7 @@ and refactor code through a real agent tool loop.
 - **Hackable** — skills, script plugins, MCP servers, YAML hooks, automations,
   a local HTTP API + Go SDK, and headless/CI modes.
 
-> Status: v0.6.0. Milestones M1–M6 implemented (see `plan.md`).
+> Status: v0.7.0. Milestones M1–M6 implemented (see `plan.md`).
 
 ---
 
@@ -78,7 +78,7 @@ go build -o ycode ./cmd/ycode     # ./ycode.exe on Windows
 go install ./cmd/ycode            # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.6.0`.
+Verify: `ycode version` → `ycode 0.7.0`.
 
 ---
 
@@ -315,7 +315,7 @@ Conventions: small focused packages, table-less unit tests per package,
 ## 17. Releases & CI
 
 - `.goreleaser.yaml`: `ycode_<os>_<arch>.tar.gz` for linux/windows/darwin ×
-  amd64/arm64. Tag to release: `git tag v0.6.0 && git push origin v0.6.0`.
+  amd64/arm64. Tag to release: `git tag v0.7.0 && git push origin v0.7.0`.
 - `.github/workflows/ci.yml`: build matrix (Go × OS) + `go vet`/`go test` +
   golangci-lint + `ycode ci` review on PRs.
 

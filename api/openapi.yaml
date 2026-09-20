@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: ycode local API
-  version: 0.6.0
+  version: 0.7.0
 servers:
   - url: http://localhost:8471
 paths:

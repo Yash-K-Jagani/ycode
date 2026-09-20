@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 
+	"github.com/alecthomas/chroma/v2/formatters"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,6 +20,38 @@ var (
 
 func codeStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Background(codeBG).Foreground(codeFG).Padding(0, 1)
+}
+
+func codePad() lipgloss.Style {
+	return lipgloss.NewStyle().Padding(0, 1)
+}
+
+// highlight renders code with Chroma (dracula). ok=false → use the plain panel.
+func highlight(lang, code string) (out string, ok bool) {
+	name := strings.ToLower(strings.TrimSpace(lang))
+	if name == "" || strings.ContainsAny(name, " \t/\\") {
+		return "", false
+	}
+	l := lexers.Match("x." + name)
+	if l == nil {
+		l = lexers.Get(name)
+	}
+	if l == nil {
+		return "", false
+	}
+	it, err := l.Tokenise(nil, code)
+	if err != nil {
+		return "", false
+	}
+	f := formatters.Get("terminal16m")
+	if f == nil {
+		return "", false
+	}
+	var b strings.Builder
+	if err := f.Format(&b, styles.Get("dracula"), it); err != nil {
+		return "", false
+	}
+	return strings.TrimRight(b.String(), "\n"), true
 }
 
 func chipStyle() lipgloss.Style {
@@ -94,17 +129,27 @@ func renderAssistant(content string) string {
 	var b strings.Builder
 	for _, sg := range splitFences(content) {
 		if sg.code {
-			body := sg.text
-			if i := strings.IndexByte(body, '\n'); i >= 0 {
-				if first := strings.TrimSpace(body[:i]); first != "" && !strings.ContainsAny(first, " \t\"'{") {
-					b.WriteString(chipStyle().Render(first) + "\n")
-					body = body[i+1:]
-				}
+			body, langName := splitLang(sg.text)
+			if langName != "" {
+				b.WriteString(chipStyle().Render(langName) + "\n")
 			}
-			b.WriteString(codeStyle().Render(strings.TrimRight(body, "\n")) + "\n")
+			if hl, ok := highlight(langName, body); ok {
+				b.WriteString(codePad().Render(hl) + "\n")
+			} else {
+				b.WriteString(codeStyle().Render(strings.TrimRight(body, "\n")) + "\n")
+			}
 		} else if strings.TrimSpace(sg.text) != "" {
 			b.WriteString(renderTextSegment(sg.text) + "\n")
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func splitLang(body string) (string, string) {
+	if i := strings.IndexByte(body, '\n'); i >= 0 {
+		if first := strings.TrimSpace(body[:i]); first != "" && !strings.ContainsAny(first, " \t\"'{") {
+			return body[i+1:], first
+		}
+	}
+	return body, ""
 }

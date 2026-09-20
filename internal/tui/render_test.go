@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -22,8 +23,11 @@ func TestSplitFences(t *testing.T) {
 
 func TestRenderAssistant(t *testing.T) {
 	out := renderAssistant("Here:\n```go\nx := 1\n```\nDone")
-	if !strings.Contains(out, "x := 1") || !strings.Contains(out, "Here") || !strings.Contains(out, "Done") {
-		t.Fatalf("content lost:\n%s", out)
+	plain := stripANSI(out)
+	for _, want := range []string{"Here", "x := 1", "Done"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("content lost (%q):\n%s", want, out)
+		}
 	}
 	if strings.Contains(out, "```") {
 		t.Fatalf("fences should be consumed:\n%s", out)
@@ -45,5 +49,34 @@ func TestIsToolLine(t *testing.T) {
 	}
 	if isToolLine("regular prose") {
 		t.Fatal("false positive")
+	}
+}
+
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+func TestHighlight(t *testing.T) {
+	hl, ok := highlight("go", "package main\nfunc main() {}\n")
+	if !ok {
+		t.Fatal("go should highlight")
+	}
+	if !strings.Contains(hl, "func") || !strings.Contains(hl, "\x1b[") {
+		t.Fatalf("no highlight codes:\n%q", hl)
+	}
+	for _, lang := range []string{"py", "js", "rust", "cs", "ps1", "yaml", "diff"} {
+		if _, ok := highlight(lang, "x"); !ok {
+			t.Fatalf("%s should highlight", lang)
+		}
+	}
+	if _, ok := highlight("notalang", "x"); ok {
+		t.Fatal("unknown lang should fail")
+	}
+	if _, ok := highlight("", "x"); ok {
+		t.Fatal("empty lang should fail")
+	}
+	out := renderAssistant("```python\nprint('hi')\n```")
+	if !strings.Contains(out, "print") || strings.Contains(out, "```") {
+		t.Fatalf("bad render:\n%s", out)
 	}
 }

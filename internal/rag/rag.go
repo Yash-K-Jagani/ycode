@@ -58,10 +58,17 @@ func ChunkText(path, text string) []Chunk {
 var skipDirs = map[string]bool{".git": true, "node_modules": true, "__pycache__": true, ".venv": true, "dist": true, "build": true, ".ycode": true}
 
 var textExts = map[string]bool{
-	".go": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true, ".py": true,
-	".rs": true, ".java": true, ".c": true, ".h": true, ".cpp": true, ".cs": true,
-	".md": true, ".txt": true, ".yaml": true, ".yml": true, ".json": true, ".toml": true,
-	".html": true, ".css": true, ".sh": true, ".ps1": true, ".sql": true, ".rb": true, ".php": true,
+	".go": true, ".js": true, ".mjs": true, ".cjs": true, ".ts": true, ".tsx": true, ".jsx": true,
+	".py": true, ".pyi": true, ".rs": true, ".java": true, ".kt": true, ".kts": true, ".scala": true,
+	".c": true, ".h": true, ".hpp": true, ".cpp": true, ".cc": true, ".cs": true, ".swift": true,
+	".rb": true, ".php": true, ".lua": true, ".zig": true, ".dart": true, ".ex": true, ".exs": true,
+	".erl": true, ".hs": true, ".ml": true, ".pl": true, ".r": true, ".jl": true, ".vue": true,
+	".svelte": true, ".astro": true, ".md": true, ".mdx": true, ".txt": true, ".yaml": true, ".yml": true,
+	".json": true, ".jsonc": true, ".toml": true, ".ini": true, ".cfg": true, ".html": true, ".css": true,
+	".scss": true, ".less": true, ".sh": true, ".bash": true, ".zsh": true, ".ps1": true, ".bat": true,
+	".cmd": true, ".sql": true, ".proto": true, ".thrift": true, ".graphql": true, ".gql": true,
+	".tf": true, ".tfvars": true, ".cmake": true, ".gradle": true, ".dockerfile": true, ".env": true,
+	".xml": true, ".svg": true, ".tex": true,
 }
 
 // Ingest walks root, chunks text files and embeds them. embedFn allows testing without Ollama.

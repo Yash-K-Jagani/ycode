@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Yash-K-Jagani/ycode/internal/lang"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
@@ -42,6 +43,9 @@ func AllowedTools(m Mode, extra ...string) []string {
 
 func SystemPrompt(m Mode, reg *tools.Registry, workdir string) string {
 	base := "You are ycode, a terminal AI coding harness. Workdir: " + workdir + ". Be concise."
+	if proj, ok := lang.Detect(workdir); ok {
+		base += " Project language: " + proj.Language + "."
+	}
 	switch m {
 	case Plan:
 		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan. If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly. Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here. Stay on task: don't repeat tool calls that already returned." + toolDocs(reg, AllowedTools(m))

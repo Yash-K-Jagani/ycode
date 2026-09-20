@@ -7,15 +7,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/lang"
 )
 
 type TestGenTool struct{ Workdir string }
 
 func (TestGenTool) Name() string { return "testgen" }
 func (TestGenTool) Description() string {
-	return "Run the project's test suite for a file's package (Go/Python/Node auto-detected). Args: path (file or dir, required)."
+	return "Run the project's test suite (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python auto-detected). Args: path (file or dir, required)."
 }
 func (TestGenTool) Schema() string {
 	return `{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}`
@@ -43,21 +44,14 @@ func (t *TestGenTool) Run(ctx context.Context, args json.RawMessage) (string, er
 	if !fi.IsDir() {
 		dir = filepath.Dir(p)
 	}
-	kind, root := detectProject(dir)
+	proj, ok := lang.Detect(dir)
+	if !ok {
+		return "", fmt.Errorf("no supported test setup found above %s (go/rust/node/deno/bun/java/c#/php/ruby/python)", dir)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	var cmd *exec.Cmd
-	switch kind {
-	case "go":
-		cmd = exec.CommandContext(ctx, "go", "test", "./...")
-	case "node":
-		cmd = exec.CommandContext(ctx, "npm", "test", "--silent")
-	case "python":
-		cmd = exec.CommandContext(ctx, "python", "-m", "pytest", "-q")
-	default:
-		return "", fmt.Errorf("no supported test setup found (go.mod/package.json/pytest) above %s", dir)
-	}
-	cmd.Dir = root
+	cmd := exec.CommandContext(ctx, proj.TestCmd[0], proj.TestCmd[1:]...)
+	cmd.Dir = proj.Root
 	out, err := cmd.CombinedOutput()
 	if len(out) > maxOutBytes {
 		out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
@@ -66,33 +60,4 @@ func (t *TestGenTool) Run(ctx context.Context, args json.RawMessage) (string, er
 		return string(out), fmt.Errorf("tests failed: %v", err)
 	}
 	return string(out), nil
-}
-
-func detectProject(dir string) (kind, root string) {
-	d := dir
-	for {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return "go", d
-		}
-		if _, err := os.Stat(filepath.Join(d, "package.json")); err == nil {
-			return "node", d
-		}
-		if hasPy(d) {
-			return "python", d
-		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			return "", dir
-		}
-		d = parent
-	}
-}
-
-func hasPy(d string) bool {
-	for _, f := range []string{"pytest.ini", "pyproject.toml", "setup.py", "requirements.txt"} {
-		if _, err := os.Stat(filepath.Join(d, f)); err == nil {
-			return true
-		}
-	}
-	return strings.HasSuffix(d, ".py")
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/router"
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/skills"
+	"github.com/Yash-K-Jagani/ycode/internal/store"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 	"github.com/Yash-K-Jagani/ycode/internal/webhooks"
@@ -90,6 +91,13 @@ type errMsg struct{ err error }
 type sysMsg string
 type toolMsg string
 type resetStreamMsg struct{}
+
+// storeInstalledMsg carries a finished store install to the UI thread.
+type storeInstalledMsg struct {
+	kind string
+	name string
+	err  error
+}
 type mcpLoadedMsg struct {
 	names []string
 	tools []tools.Tool
@@ -265,6 +273,48 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 }
 
 func selectModelSilent(m *Model, model string) string { return applyModel(m, "ollama", model) }
+
+func storeList(items []store.Entry) string {
+	if len(items) == 0 {
+		return "Store is empty."
+	}
+	var b strings.Builder
+	for _, e := range items {
+		fmt.Fprintf(&b, "- %s [%s] %s\n  %s\n", e.Name, e.Kind, displaySource(e), e.Description)
+	}
+	b.WriteString("/store install <name> · /store search <q> · /store update")
+	return b.String()
+}
+
+func displaySource(e store.Entry) string {
+	s := e.Source
+	if e.Subdir != "" {
+		s += "#" + e.Subdir
+	}
+	if e.Ref != "" {
+		s += "@" + e.Ref
+	}
+	return s
+}
+
+// storeUpdateCmd refreshes the cached index in the background.
+func (m *Model) storeUpdateCmd(url string) tea.Cmd {
+	return func() tea.Msg {
+		idx, err := store.Update(url)
+		if err != nil {
+			return sysMsg("store update failed: " + err.Error())
+		}
+		return sysMsg(fmt.Sprintf("store: %d entries", len(idx.Items)))
+	}
+}
+
+// storeInstallCmd installs a store entry in the background.
+func (m *Model) storeInstallCmd(e store.Entry) tea.Cmd {
+	return func() tea.Msg {
+		name, err := store.Install(e, m.skillMgr, m.pluginLoader)
+		return storeInstalledMsg{kind: e.Kind, name: name, err: err}
+	}
+}
 
 // modelsPullCmd pulls an Ollama model in the background.
 func modelsPullCmd(model string) tea.Cmd {
@@ -579,6 +629,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case sysMsg:
 		m.appendSys(string(msg))
+		return m, nil
+	case storeInstalledMsg:
+		if msg.err != nil {
+			m.appendSys("store install failed: " + msg.err.Error())
+			return m, nil
+		}
+		if msg.kind == "plugin" {
+			m.registerPluginTools()
+		}
+		m.appendSys("Installed " + msg.kind + ": " + msg.name)
 		return m, nil
 	case editorDoneMsg:
 		if msg.err != nil {

@@ -1,0 +1,6 @@
+{
+  "name": "hello",
+  "description": "hello-world script plugin from the ycode store",
+  "command": "echo hello from the ycode store",
+  "schema": {"type": "object"}
+}

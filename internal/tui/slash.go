@@ -23,6 +23,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
+	"github.com/Yash-K-Jagani/ycode/internal/store"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
@@ -157,7 +158,7 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			return doctorReport(ctx, m), nil
@@ -551,6 +552,52 @@ func slashRegistry() map[string]slashHandler {
 				return "No plugins. Add ~/.ycode/plugins/<name>/plugin.json {name, description, command} or install one: /plugins install <git-url|owner/repo|local-dir|.wasm>. Then /plugins reload.", nil
 			}
 			return fmt.Sprintf("Plugins (%d):\n- %s\nUsable in build mode as tools.", len(names), strings.Join(names, "\n- ")), nil
+		},
+		"/store": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 0 || f[0] == "list" {
+				idx, err := store.Load()
+				if err != nil {
+					return "store: " + err.Error() + " — run /store update first", nil
+				}
+				return storeList(idx.Search("")), nil
+			}
+			switch f[0] {
+			case "update":
+				url := ""
+				if len(f) > 1 {
+					url = f[1]
+				}
+				m.appendSys("Updating store index…")
+				return "", m.storeUpdateCmd(url)
+			case "search":
+				idx, err := store.Load()
+				if err != nil {
+					return "store: " + err.Error(), nil
+				}
+				q := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "search"))
+				res := idx.Search(q)
+				if len(res) == 0 {
+					return "No store entries match " + strconv.Quote(q), nil
+				}
+				return storeList(res), nil
+			case "install":
+				if len(f) < 2 {
+					return "Usage: /store install <name> (see /store list)", nil
+				}
+				idx, err := store.Load()
+				if err != nil {
+					return "store: " + err.Error(), nil
+				}
+				e, ok := idx.Get(f[1])
+				if !ok {
+					return "No store entry " + strconv.Quote(f[1]), nil
+				}
+				m.appendSys(fmt.Sprintf("Installing %s (%s) from %s …", e.Name, e.Kind, displaySource(e)))
+				return "", m.storeInstallCmd(e)
+			default:
+				return "Usage: /store [list|search|install|update]", nil
+			}
 		},
 		"/variants": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx)

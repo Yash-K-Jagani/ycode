@@ -144,6 +144,7 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/rag [ingest [path]│<query>]` | Local RAG index / search |
 | `/mcps [list│add│remove│tools]` | MCP servers (`mcp__<server>__<tool>` tools in build) |
 | `/skills [list│install│run│export│import]` | Skills (git URL, `owner/repo`, or local dir; zip share) |
+| `/store [list│search│install│update]` | Curated skill/plugin store |
 | `/hooks` | Show configured hook commands |
 | `/prompts [list│show│run│save│versions]` | Versioned prompt library (4 builtins, `{{input}}` templates) |
 | `/plugins [install│reload]` | Script plugins (git URL, `owner/repo`, or local dir) |
@@ -159,6 +160,7 @@ ycode version
 ycode run "task" [--mode build|plan|chat] [--agent builder]
 ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
 ycode batch add|list|run|clear        # offline job queue
+ycode store list|search|install|update # curated skill/plugin store
 ycode ci                              # diff review + tests → markdown (PR-friendly)
 ycode daemon                          # interval automations → queue → run
 ycode audit [--date YYYY-MM-DD|list]  # decrypted local audit log

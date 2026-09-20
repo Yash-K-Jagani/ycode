@@ -1,0 +1,16 @@
+# ycode store index (curated by PR)
+# Entry: installable via /store install <name> or `ycode store install <name>`
+version: 1
+items:
+  - name: reviewer
+    kind: skill
+    source: https://github.com/Yash-K-Jagani/ycode.git
+    subdir: store/examples/reviewer
+    ref: main
+    description: Strict code reviewer skill (summaries, file:line findings, LGTM/Needs work).
+  - name: hello
+    kind: plugin
+    source: https://github.com/Yash-K-Jagani/ycode.git
+    subdir: store/examples/hello
+    ref: main
+    description: Hello-world script plugin proving store install end to end.

@@ -36,6 +36,7 @@ func slashList() []slashItem {
 		{"/rag", "local RAG search"},
 		{"/mcps", "MCP servers"},
 		{"/skills", "skills"},
+		{"/store", "skill/plugin store"},
 		{"/hooks", "configured hooks"},
 		{"/prompts", "prompt library"},
 		{"/plugins", "script plugins"},

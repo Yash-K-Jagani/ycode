@@ -17,7 +17,7 @@
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
 | `/plan` `/build` `/chat` `/thinking` | Switch mode (or Tab) |
 | `/review [path]` | AI review of `git diff` |
-| `/test [path]` | Run project tests |
+| `/test [path] [filter]` | Run project tests, optionally one test by name |
 | `/refactor <goal>` | Checkpoint branch + armed instruction |
 | `/rag [ingest [path]|<query>]` | Local RAG |
 | `/mcps [list|add|remove|tools]` | MCP servers |

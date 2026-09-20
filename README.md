@@ -139,7 +139,7 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
 | `/plan` `/build` `/chat` `/thinking` | Switch mode |
 | `/review [path]` | AI review of `git diff` (summary → file:line findings → fixes) |
-| `/test [path]` | Run project tests (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python) |
+| `/test [path] [filter]` | Run project tests (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python) |
 | `/refactor <goal>` | Checkpoint branch + armed instruction with revert directions |
 | `/rag [ingest [path]│<query>]` | Local RAG index / search |
 | `/mcps [list│add│remove│tools]` | MCP servers (`mcp__<server>__<tool>` tools in build) |
@@ -189,8 +189,8 @@ On primary failure, configured cloud providers are retried as fallbacks
 Build mode tools (plan gets the read-only subset): `read` `write` `edit`
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
-`testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python) `security` `tree`
-`todo` `memory` `patch` — plus dynamic `mcp__*` and `plugin__*` tools.
+`testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`
+`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) — plus dynamic `mcp__*` and `plugin__*` tools.
 Chat code blocks get Chroma syntax highlighting; prompts carry the detected
 project language.
 

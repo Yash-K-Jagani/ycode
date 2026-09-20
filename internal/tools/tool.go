@@ -56,6 +56,7 @@ func DefaultRegistry(workdir string) *Registry {
 	r.Add(&TodoTool{Workdir: workdir})
 	r.Add(&MemoryTool{})
 	r.Add(&PatchTool{Workdir: workdir})
+	r.Add(&RunTool{Workdir: workdir})
 	return r
 }
 

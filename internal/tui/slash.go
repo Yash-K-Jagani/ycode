@@ -437,11 +437,19 @@ func slashRegistry() map[string]slashHandler {
 			return b.String(), nil
 		},
 		"/test": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			target := strings.TrimSpace(args)
-			if target == "" {
-				target = m.workdir
+			f := strings.Fields(args)
+			target := m.workdir
+			payload := map[string]string{}
+			if len(f) > 0 {
+				target = f[0]
+				payload["path"] = target
+			} else {
+				payload["path"] = target
 			}
-			raw, _ := json.Marshal(map[string]string{"path": target})
+			if len(f) > 1 {
+				payload["run"] = strings.Join(f[1:], " ")
+			}
+			raw, _ := json.Marshal(payload)
 			out, err := (&tools.TestGenTool{Workdir: m.workdir}).Run(ctx, raw)
 			if len(out) > 6000 {
 				out = out[:6000] + "\n…(truncated)"

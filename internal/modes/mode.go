@@ -32,7 +32,7 @@ func AllowedTools(m Mode, extra ...string) []string {
 	var base []string
 	switch m {
 	case Build:
-		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch"}
+		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run"}
 	case Plan:
 		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo"}
 	default:
@@ -66,6 +66,8 @@ func routing() string {
 		"\n- GitHub repos/PRs/issues or clone a link: github. repo history/diffs/commits: git." +
 		"\n- user gives a repo/skill/plugin link (or owner/repo): download it with github clone, skills install, or plugins install — never ask them to do it manually." +
 		"\n- map directories: tree. multi-step work: track it with todo. remember user facts: memory. apply a unified diff: patch." +
+		"\n- run code and show output: run tool (inline code or a file, 10 languages). run tests: testgen (use run filter for one test)." +
+		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
 		"\n- in PLAN mode bash/write/edit are disabled: use the git tool (log/diff/show/status all work) and read/grep/glob." +
 		"\n- run shell commands only via bash (project dir, destructive cmds are blocked)." +
 		"\n- stay on task: call only the tools needed for THIS request. Don't explore the repo for fun." +

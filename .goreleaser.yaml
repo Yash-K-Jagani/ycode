@@ -1,0 +1,33 @@
+version: 2
+project_name: ycode
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: ycode
+    main: ./cmd/ycode
+    binary: ycode
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+checksum:
+  name_template: checksums.txt
+snapshot:
+  version_template: "{{ .Version }}-next"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - ^docs:
+      - ^test:
+release:
+  github:
+    owner: Yash-K-Jagani
+    name: ycode

@@ -1,0 +1,612 @@
+package tui
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/Yash-K-Jagani/ycode/internal/agents"
+	"github.com/Yash-K-Jagani/ycode/internal/hooks"
+	"github.com/Yash-K-Jagani/ycode/internal/mcp"
+	"github.com/Yash-K-Jagani/ycode/internal/modes"
+	"github.com/Yash-K-Jagani/ycode/internal/prompts"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
+	"github.com/Yash-K-Jagani/ycode/internal/rag"
+	"github.com/Yash-K-Jagani/ycode/internal/sessions"
+	"github.com/Yash-K-Jagani/ycode/internal/tools"
+)
+
+type slashHandler func(ctx context.Context, m *Model, args string) (string, tea.Cmd)
+
+type editorDoneMsg struct{ err error }
+
+var ErrQuit = fmt.Errorf("quit")
+
+type modelEntry struct {
+	Provider  string
+	Model     string
+	Installed bool
+}
+
+func listEntries(ctx context.Context, m *Model) ([]modelEntry, string) {
+	var out []modelEntry
+	note := ""
+	seen := map[string]bool{}
+	if ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx); err == nil {
+		for _, mi := range ms {
+			out = append(out, modelEntry{Provider: "ollama", Model: mi.ID, Installed: true})
+			seen["ollama\x00"+mi.ID] = true
+		}
+	} else {
+		note = "ollama unreachable (" + err.Error() + "); showing cloud catalog only"
+	}
+	for _, c := range registry.Catalog() {
+		if seen[c.Provider+"\x00"+c.ID] {
+			continue
+		}
+		out = append(out, modelEntry{Provider: c.Provider, Model: c.ID})
+	}
+	return out, note
+}
+
+func applyModel(m *Model, provider, model string) string {
+	m.cfg.ActiveProvider = provider
+	m.cfg.ActiveModel = model
+	m.router.Update(m.cfg)
+	_ = m.cfg.Save()
+	if m.sess != nil {
+		m.sess.Provider = provider
+		m.sess.Model = model
+		_ = m.sess.Save()
+	}
+	warn := ""
+	if provider != "ollama" && !hasKey(m, provider) {
+		warn = fmt.Sprintf(" — warning: no API key set for %s (see /connect)", provider)
+	}
+	return fmt.Sprintf("Switched to %s / %s%s", provider, model, warn)
+}
+
+func hasKey(m *Model, provider string) bool {
+	switch provider {
+	case "gemini":
+		return m.cfg.GeminiAPIKey != ""
+	case "openrouter":
+		return m.cfg.OpenRouterKey != ""
+	case "groq":
+		return m.cfg.GroqKey != ""
+	}
+	return true
+}
+
+func modelsHelp(m *Model, entries []modelEntry, note string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Models (current: %s / %s)\n", m.cfg.ActiveProvider, m.cfg.ActiveModel)
+	for i, e := range entries {
+		tag := ""
+		if e.Installed {
+			tag = " [installed]"
+		}
+		fmt.Fprintf(&b, "%d. %s / %s%s\n", i+1, e.Provider, e.Model, tag)
+	}
+	if note != "" {
+		b.WriteString(note + "\n")
+	}
+	b.WriteString("Use: /models <number>  |  /models <provider> <model>  |  /models <model-name>")
+	return b.String()
+}
+
+func selectModel(m *Model, entries []modelEntry, args string) string {
+	a := strings.TrimSpace(args)
+	if n, err := strconv.Atoi(a); err == nil {
+		if n < 1 || n > len(entries) {
+			return fmt.Sprintf("number out of range (1-%d)", len(entries))
+		}
+		e := entries[n-1]
+		return applyModel(m, e.Provider, e.Model)
+	}
+	parts := strings.Fields(a)
+	if len(parts) == 2 {
+		return applyModel(m, parts[0], parts[1])
+	}
+	// single token: exact installed match → exact catalog match → contains match
+	for _, e := range entries {
+		if e.Installed && strings.EqualFold(e.Model, a) {
+			return applyModel(m, e.Provider, e.Model)
+		}
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Model, a) {
+			return applyModel(m, e.Provider, e.Model)
+		}
+	}
+	var fuzzy []modelEntry
+	for _, e := range entries {
+		if strings.Contains(strings.ToLower(e.Model), strings.ToLower(a)) {
+			fuzzy = append(fuzzy, e)
+		}
+	}
+	if len(fuzzy) == 1 {
+		return applyModel(m, fuzzy[0].Provider, fuzzy[0].Model)
+	}
+	if len(fuzzy) > 1 {
+		var b strings.Builder
+		b.WriteString("Multiple matches:\n")
+		for _, e := range fuzzy {
+			fmt.Fprintf(&b, "- %s / %s\n", e.Provider, e.Model)
+		}
+		return b.String()
+	}
+	return "No model matches " + strconv.Quote(a)
+}
+
+func (m *Model) setMode(md modes.Mode) string {
+	m.mode = md
+	return ""
+}
+
+func slashRegistry() map[string]slashHandler {
+	return map[string]slashHandler{
+		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
+		},
+		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			return doctorReport(ctx, m), nil
+		},
+		"/exit": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { panic(ErrQuit) },
+		"/new": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
+			_ = m.sess.Save()
+			m.msgs = nil
+			m.vp.SetContent("")
+			return "New session started.", nil
+		},
+		"/sessions": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			if args != "" {
+				s, err := sessions.Load(strings.TrimSpace(args))
+				if err != nil {
+					return "session not found: " + args, nil
+				}
+				m.sess = s
+				if s.Provider != "" {
+					m.cfg.ActiveProvider = s.Provider
+				}
+				if s.Model != "" {
+					m.cfg.ActiveModel = s.Model
+				}
+				m.router.Update(m.cfg)
+				_ = m.cfg.Save()
+				m.renderAll()
+				return "Resumed " + s.Title + " (" + m.cfg.ActiveProvider + "/" + m.cfg.ActiveModel + ")", nil
+			}
+			list, err := sessions.List()
+			if err != nil || len(list) == 0 {
+				return "No saved sessions.", nil
+			}
+			var b strings.Builder
+			for i, s := range list {
+				if i >= 10 {
+					break
+				}
+				fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
+			}
+			b.WriteString("Use: /sessions <id> to resume")
+			return b.String(), nil
+		},
+		"/models": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 2 && f[0] == "install" {
+				m.appendSys("Pulling " + f[1] + " (may take a while)…")
+				return "", modelsPullCmd(f[1])
+			}
+			entries, note := listEntries(ctx, m)
+			if args == "" {
+				return modelsHelp(m, entries, note) + "\n/models install <ollama-model> — one-click install", nil
+			}
+			return selectModel(m, entries, args), nil
+		},
+		"/model": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			entries, note := listEntries(ctx, m)
+			if args == "" {
+				return modelsHelp(m, entries, note), nil
+			}
+			return selectModel(m, entries, args), nil
+		},
+		"/status": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			toks := sessions.EstimateTokens(m.sess.Messages)
+			p, c, usd := m.tracker.Today()
+			h, mi, size := m.semCache.Stats()
+			ragInfo := "rag: no index (run /rag ingest)"
+			if idx, ok := ragLoad(m); ok {
+				ragInfo = fmt.Sprintf("rag: %d chunks (built %s)", len(idx.Chunks), idx.BuiltAt.Format("2006-01-02 15:04"))
+			}
+			return fmt.Sprintf("mode=%s agent=%s\nprovider=%s model=%s msgs=%d ~tokens=%d\ntoday: %d prompt + %d completion tokens · $%.4f\ncache: %d hits / %d misses (%d items)\n%s\nlatency:\n%s",
+				m.mode, m.agent.Name, m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages), toks, p, c, usd, h, mi, size, ragInfo, m.router.Stats().Summary()), nil
+		},
+		"/connect": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			m.conn = newConnect()
+			return "", textinput.Blink
+		},
+		"/plan":  func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Plan), nil },
+		"/build": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Build), nil },
+		"/chat":  func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Chat), nil },
+		"/thinking": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			return m.setMode(modes.Thinking), nil
+		},
+		"/agent": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			if args == "" {
+				var b strings.Builder
+				b.WriteString("Agents (current: " + m.agent.Name + ")\n")
+				for _, a := range agents.All() {
+					fmt.Fprintf(&b, "- %s: %s\n", a.Name, a.Description)
+				}
+				b.WriteString("Use: /agent <name>")
+				return b.String(), nil
+			}
+			a, ok := agents.Get(strings.TrimSpace(args))
+			if !ok {
+				return "unknown agent (try /agent with no args)", nil
+			}
+			m.agent = a
+			return "Agent: " + a.Name + " — " + a.Description, nil
+		},
+		"/init": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			return m.initProject(), nil
+		},
+		"/editor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			ed := os.Getenv("EDITOR")
+			if ed == "" {
+				ed = "notepad"
+			}
+			target := strings.TrimSpace(args)
+			if target == "" {
+				target = m.workdir
+			}
+			cmd := exec.Command(ed, target)
+			return "Opened " + ed + " " + target, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return editorDoneMsg{err}
+			})
+		},
+		"/review": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			spec := strings.TrimSpace(args)
+			diffArgs := map[string]string{"action": "diff"}
+			if spec != "" {
+				diffArgs["args"] = spec
+			}
+			raw, _ := json.Marshal(diffArgs)
+			out, err := (&tools.GitTool{Workdir: m.workdir}).Run(ctx, raw)
+			if err != nil {
+				return "review failed: " + err.Error(), nil
+			}
+			if strings.TrimSpace(out) == "" || out == "(clean)" {
+				return "Working tree clean — nothing to review.", nil
+			}
+			if len(out) > 30*1024 {
+				out = out[:30*1024] + "\n…(diff truncated)"
+			}
+			m.appendSys("Reviewing diff (" + fmt.Sprintf("%d bytes", len(out)) + ")…")
+			return "", m.reviewCmd(out)
+		},
+		"/mcps": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 0 || f[0] == "list" {
+				names := m.mcpMgr.Names()
+				if len(names) == 0 {
+					return "No MCP servers. Add one: /mcps add <name> <command> [args...]", nil
+				}
+				return "MCP servers: " + strings.Join(names, ", ") + fmt.Sprintf(" (%d tools loaded)", len(m.mcpNames)) + "\n/mcps tools — (re)load tools · /mcps remove <name>", nil
+			}
+			switch f[0] {
+			case "add":
+				if len(f) < 3 {
+					return "Usage: /mcps add <name> <command> [args...]", nil
+				}
+				if err := m.mcpMgr.Add(f[1], mcp.ServerConfig{Command: f[2], Args: f[3:]}); err != nil {
+					return "mcp add failed: " + err.Error(), nil
+				}
+				return "Added MCP server " + f[1] + ". Run /mcps tools to load its tools.", nil
+			case "remove":
+				if len(f) < 2 {
+					return "Usage: /mcps remove <name>", nil
+				}
+				if err := m.mcpMgr.Remove(f[1]); err != nil {
+					return "mcp remove failed: " + err.Error(), nil
+				}
+				return "Removed MCP server " + f[1] + ".", nil
+			case "tools":
+				m.appendSys("Loading MCP tools…")
+				return "", m.loadMCPsCmd()
+			default:
+				return "Usage: /mcps [list|add|remove|tools]", nil
+			}
+		},
+		"/skills": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 0 || f[0] == "list" {
+				list, err := m.skillMgr.List()
+				if err != nil {
+					return "skills error: " + err.Error(), nil
+				}
+				if len(list) == 0 {
+					return "No skills installed. /skills install <git-url|local-dir>", nil
+				}
+				var b strings.Builder
+				for _, s := range list {
+					fmt.Fprintf(&b, "- %s: %s\n", s.Name, s.Description)
+				}
+				b.WriteString("/skills run <name> — inject into next turn")
+				return b.String(), nil
+			}
+			switch f[0] {
+			case "install":
+				if len(f) < 2 {
+					return "Usage: /skills install <git-url|local-dir>", nil
+				}
+				s, err := m.skillMgr.Install(strings.TrimSpace(strings.TrimPrefix(args, "install")))
+				if err != nil {
+					return "skill install failed: " + err.Error(), nil
+				}
+				return "Installed skill: " + s.Name, nil
+			case "run":
+				if len(f) < 2 {
+					return "Usage: /skills run <name>", nil
+				}
+				s, body, err := m.skillMgr.Get(f[1])
+				if err != nil {
+					return "skill error: " + err.Error(), nil
+				}
+				m.pendingSkill = "Skill [" + s.Name + "]:\n" + body
+				return "Skill '" + s.Name + "' armed — its instructions apply to your next message.", nil
+			case "export":
+				if len(f) < 3 {
+					return "Usage: /skills export <name> <file.zip>", nil
+				}
+				if err := m.skillMgr.Export(f[1], f[2]); err != nil {
+					return "export failed: " + err.Error(), nil
+				}
+				return "Exported skill '" + f[1] + "' to " + f[2], nil
+			case "import":
+				if len(f) < 2 {
+					return "Usage: /skills import <file.zip>", nil
+				}
+				s, err := m.skillMgr.Import(f[1])
+				if err != nil {
+					return "import failed: " + err.Error(), nil
+				}
+				return "Imported skill: " + s.Name, nil
+			default:
+				return "Usage: /skills [list|install|run|export|import]", nil
+			}
+		},
+		"/hooks": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			events := []hooks.Event{hooks.OnRequest, hooks.OnResponse, hooks.PreTool, hooks.PostTool, hooks.OnError}
+			var b strings.Builder
+			any := false
+			for _, e := range events {
+				for _, en := range m.hookset.Points[e] {
+					fmt.Fprintf(&b, "%s: %s\n", e, en.Command)
+					any = true
+				}
+			}
+			if !any {
+				return "No hooks configured. Add ~/.ycode/hooks.yaml or <project>/.ycode/hooks.yaml:\npre_tool:\n  - command: \"echo $YCODE_TOOL\"", nil
+			}
+			return b.String(), nil
+		},
+		"/rag": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 0 {
+				if idx, ok := ragLoad(m); ok {
+					return fmt.Sprintf("rag: %d chunks, built %s. /rag ingest [path] to rebuild, /rag <query> to search.", len(idx.Chunks), idx.BuiltAt.Format("2006-01-02 15:04")), nil
+				}
+				return "rag: no index. Run /rag ingest [path].", nil
+			}
+			if f[0] == "ingest" {
+				root := m.workdir
+				if len(f) > 1 {
+					root = f[1]
+				}
+				m.appendSys("RAG ingest started for " + root + " (embedding, may take a while)…")
+				return "", m.ragIngestCmd(root)
+			}
+			idx, ok := ragLoad(m)
+			if !ok {
+				return "rag: no index. Run /rag ingest first.", nil
+			}
+			qv, err := m.embedder.Embed(ctx, []string{args})
+			if err != nil {
+				return "rag query failed: " + err.Error(), nil
+			}
+			chunks := rag.Query(idx, qv[0], 4)
+			if len(chunks) == 0 {
+				return "rag: no matches.", nil
+			}
+			var b strings.Builder
+			for _, c := range chunks {
+				fmt.Fprintf(&b, "--- %s ---\n%s\n\n", c.Path, truncateForRag(c.Text))
+			}
+			return b.String(), nil
+		},
+		"/test": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			target := strings.TrimSpace(args)
+			if target == "" {
+				target = m.workdir
+			}
+			raw, _ := json.Marshal(map[string]string{"path": target})
+			out, err := (&tools.TestGenTool{Workdir: m.workdir}).Run(ctx, raw)
+			if len(out) > 6000 {
+				out = out[:6000] + "\n…(truncated)"
+			}
+			if err != nil {
+				return "Tests FAILED:\n" + out + "\nTip: switch to /build and ask the model to fix them.", nil
+			}
+			return "Tests passed:\n" + out, nil
+		},
+		"/refactor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			goal := strings.TrimSpace(args)
+			if goal == "" {
+				return "Usage: /refactor <what to refactor> [force]", nil
+			}
+			force := strings.HasSuffix(goal, " force")
+			goal = strings.TrimSuffix(goal, " force")
+			raw, _ := json.Marshal(map[string]string{"action": "status"})
+			st, _ := (&tools.GitTool{Workdir: m.workdir}).Run(ctx, raw)
+			if strings.TrimSpace(st) != "" && st != "(clean)" && !force {
+				return "Working tree is dirty. Commit first or append 'force' — refactor runs on a checkpoint branch but dirty files complicate revert.", nil
+			}
+			branch := fmt.Sprintf("ycode/refactor-%d", time.Now().Unix())
+			raw2, _ := json.Marshal(map[string]string{"action": "create_branch", "args": branch})
+			if _, err := (&tools.GitTool{Workdir: m.workdir}).Run(ctx, raw2); err != nil {
+				return "refactor: could not create checkpoint branch: " + err.Error(), nil
+			}
+			m.setMode(modes.Build)
+			m.ta.SetValue("Refactor (" + branch + " checkpoint created): " + goal + "\nPlan: explore, edit, run /test-equivalent via testgen, summarize the diff.")
+			return "Checkpoint branch " + branch + " created. Instruction armed below — press Enter to run (revert with: git checkout main -- . / git branch -D " + branch + ").", nil
+		},
+		"/prompts": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			pm := prompts.NewManager()
+			f := strings.Fields(args)
+			if len(f) == 0 || f[0] == "list" {
+				return "Prompts:\n- " + strings.Join(pm.List(), "\n- ") + "\n/prompts show|run <name> [input] · /prompts save <name> <text> · /prompts versions <name>", nil
+			}
+			switch f[0] {
+			case "show":
+				if len(f) < 2 {
+					return "Usage: /prompts show <name>", nil
+				}
+				body, err := pm.Show(f[1])
+				if err != nil {
+					return err.Error(), nil
+				}
+				return body, nil
+			case "run":
+				if len(f) < 2 {
+					return "Usage: /prompts run <name> [input]", nil
+				}
+				tmpl, err := pm.Show(f[1])
+				if err != nil {
+					return err.Error(), nil
+				}
+				input := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "run "+f[1]))
+				m.pendingSkill = "Prompt [" + f[1] + "]:\n" + prompts.Render(tmpl, input)
+				return "Prompt '" + f[1] + "' armed — applies to your next message.", nil
+			case "save":
+				if len(f) < 3 {
+					return "Usage: /prompts save <name> <text with {{input}}>", nil
+				}
+				body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "save "+f[1]))
+				if err := pm.Save(f[1], body); err != nil {
+					return "save failed: " + err.Error(), nil
+				}
+				return "Saved prompt '" + f[1] + "' (previous version snapshotted).", nil
+			case "versions":
+				if len(f) < 2 {
+					return "Usage: /prompts versions <name>", nil
+				}
+				vs := pm.Versions(f[1])
+				if len(vs) == 0 {
+					return "No snapshots for '" + f[1] + "'.", nil
+				}
+				return "Snapshots:\n- " + strings.Join(vs, "\n- "), nil
+			default:
+				return "Usage: /prompts [list|show|run|save|versions]", nil
+			}
+		},
+		"/plugins": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) > 0 && f[0] == "install" {
+				src := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "install"))
+				if src == "" {
+					return "Usage: /plugins install <git-url|owner/repo|local-dir>", nil
+				}
+				name, err := m.pluginLoader.Install(src)
+				if err != nil {
+					return "plugin install failed: " + err.Error(), nil
+				}
+				m.registerPluginTools()
+				return "Installed plugin: " + name + " (tools registered)", nil
+			}
+			if len(f) > 0 && f[0] == "reload" {
+				m.registerPluginTools()
+			}
+			names := m.pluginLoader.Names()
+			if len(names) == 0 {
+				return "No plugins. Add ~/.ycode/plugins/<name>/plugin.json {name, description, command}. Then /plugins reload.", nil
+			}
+			return fmt.Sprintf("Plugins (%d):\n- %s\nUsable in build mode as tools.", len(names), strings.Join(names, "\n- ")), nil
+		},
+		"/variants": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx)
+			if err != nil {
+				return "variants: " + err.Error(), nil
+			}
+			var b strings.Builder
+			b.WriteString("Installed variants (current marked *):\n")
+			for _, mi := range ms {
+				mark := " "
+				if mi.ID == m.cfg.ActiveModel && m.cfg.ActiveProvider == "ollama" {
+					mark = "*"
+				}
+				fmt.Fprintf(&b, "%s %s\n", mark, mi.ID)
+			}
+			b.WriteString("\nTip (~4GB VRAM): prefer Q4_K_M 7B-or-smaller, e.g. qwen2.5-coder:7b-instruct-q4_K_M.\nSwap with /models <number>; install with /models install <name>.")
+			return b.String(), nil
+		},
+	}
+}
+
+func doctorReport(ctx context.Context, m *Model) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "mode=%s agent=%s\nprovider=%s model=%s\n", m.mode, m.agent.Name, m.cfg.ActiveProvider, m.cfg.ActiveModel)
+	allowed := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
+	if len(allowed) == 0 {
+		b.WriteString("tools: NONE in this mode — switch to /build (all) or /plan (read-only) to use file tools\n")
+	} else {
+		fmt.Fprintf(&b, "tools (%d): %s\n", len(allowed), strings.Join(allowed, ", "))
+	}
+	if ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx); err != nil {
+		b.WriteString("ollama: UNREACHABLE (" + err.Error() + ")\n")
+	} else {
+		fmt.Fprintf(&b, "ollama: ok (%d models)\n", len(ms))
+	}
+	if _, ok := ragLoad(m); ok {
+		b.WriteString("rag: indexed\n")
+	} else {
+		b.WriteString("rag: no index (/rag ingest)\n")
+	}
+	h, mi, size := m.semCache.Stats()
+	fmt.Fprintf(&b, "cache: %d hits / %d misses (%d items)\n", h, mi, size)
+	if strings.Contains(m.cfg.ActiveModel, "1.5b") || strings.Contains(m.cfg.ActiveModel, "1b") {
+		b.WriteString("advice: tiny models often mangle tool calls — prefer a 3b+ coder model (/models) for build mode\n")
+	}
+	return b.String()
+}
+
+var fileTaskRe = regexp.MustCompile(`(?i)\b(read|edit|write|create|fix|update|delete|open|list|show|find|search|run|test|clone|review|refactor)\b.*(file|folder|dir|code|repo|test|diff|path|\.\w{1,5}\b)|(\bfile\b|\bfolder\b|\bdirectory\b|\brepo\b)`)
+
+func ragLoad(m *Model) (rag.Index, bool) {
+	if m.ragIdx != nil && len(m.ragIdx.Chunks) > 0 {
+		return *m.ragIdx, true
+	}
+	idx, ok := rag.Load(m.workdir)
+	if ok {
+		m.ragIdx = &idx
+	}
+	return idx, ok
+}
+
+func truncateForRag(s string) string {
+	if len(s) > 1200 {
+		return s[:1200] + "\n…"
+	}
+	return s
+}

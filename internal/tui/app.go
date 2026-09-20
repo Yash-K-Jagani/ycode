@@ -1,0 +1,720 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Yash-K-Jagani/ycode/internal/agent"
+	"github.com/Yash-K-Jagani/ycode/internal/agents"
+	"github.com/Yash-K-Jagani/ycode/internal/audit"
+	"github.com/Yash-K-Jagani/ycode/internal/cache"
+	"github.com/Yash-K-Jagani/ycode/internal/config"
+	yctx "github.com/Yash-K-Jagani/ycode/internal/context"
+	"github.com/Yash-K-Jagani/ycode/internal/cost"
+	"github.com/Yash-K-Jagani/ycode/internal/embed"
+	"github.com/Yash-K-Jagani/ycode/internal/hooks"
+	"github.com/Yash-K-Jagani/ycode/internal/mcp"
+	"github.com/Yash-K-Jagani/ycode/internal/modes"
+	"github.com/Yash-K-Jagani/ycode/internal/plugins"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
+	"github.com/Yash-K-Jagani/ycode/internal/rag"
+	"github.com/Yash-K-Jagani/ycode/internal/router"
+	"github.com/Yash-K-Jagani/ycode/internal/sessions"
+	"github.com/Yash-K-Jagani/ycode/internal/skills"
+	"github.com/Yash-K-Jagani/ycode/internal/tools"
+	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
+	"github.com/Yash-K-Jagani/ycode/internal/webhooks"
+	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
+)
+
+type Model struct {
+	cfg     config.Config
+	router  *router.Router
+	sess    *sessions.Session
+	ta      textarea.Model
+	vp      viewport.Model
+	keys    KeyMap
+	th      theme.Theme
+	msgs    []string
+	busy    bool
+	stream  strings.Builder
+	prog    *tea.Program
+	startup string
+
+	mode    modes.Mode
+	agent   agents.Agent
+	toolreg *tools.Registry
+	workdir string
+	tracker *cost.Tracker
+
+	mcpMgr       *mcp.Manager
+	mcpNames     []string
+	hookset      *hooks.Hooks
+	skillMgr     *skills.Manager
+	pendingSkill string
+
+	embedder *embed.Client
+	ragIdx   *rag.Index
+	ragOff   bool
+	semCache *cache.Cache
+
+	pluginLoader *plugins.Loader
+	pluginNames  []string
+
+	palIdx    int
+	palHide   bool
+	lastInput string
+
+	conn       *connectFlow
+	winW, winH int
+}
+
+type deltaMsg string
+type doneMsg struct {
+	text string
+	note string
+}
+type errMsg struct{ err error }
+type sysMsg string
+type toolMsg string
+type resetStreamMsg struct{}
+type mcpLoadedMsg struct {
+	names []string
+	tools []tools.Tool
+	err   error
+}
+
+type progWriter struct{ send func(string) }
+
+func (w progWriter) Write(p []byte) (int, error) { w.send(string(p)); return len(p), nil }
+
+var _ io.Writer = progWriter{}
+
+func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir string) Model {
+	ta := textarea.New()
+	ta.Placeholder = "Ask anything…  (/help for commands, Tab switches mode)"
+	ta.Focus()
+	ta.CharLimit = 8000
+	ta.SetHeight(3)
+	vp := viewport.New(80, 20)
+	th := theme.Dark()
+	ag, _ := agents.Get("builder")
+	em := embed.New(cfg.OllamaHost, "")
+	m := Model{
+		cfg: cfg, router: r, sess: sess, ta: ta, vp: vp,
+		keys: DefaultKeyMap(), th: th,
+		mode: modes.Chat, agent: ag,
+		toolreg: tools.DefaultRegistry(workdir),
+		workdir: workdir, tracker: cost.New(),
+		mcpMgr: mcp.NewManager(), hookset: hooks.Load(),
+		skillMgr: skills.NewManager(),
+		embedder: em, semCache: cache.New(em.Embed),
+		pluginLoader: plugins.NewLoader(),
+	}
+	m.registerPluginTools()
+	return m
+}
+
+func (m *Model) registerPluginTools() {
+	m.pluginLoader.Reload()
+	m.pluginNames = nil
+	for _, t := range m.pluginLoader.Tools() {
+		m.toolreg.Add(t)
+		m.pluginNames = append(m.pluginNames, t.Name())
+	}
+}
+
+func (m *Model) SetProgram(p *tea.Program) { m.prog = p }
+
+func (m Model) Init() tea.Cmd { return textarea.Blink }
+
+func (m *Model) renderAll() {
+	m.msgs = nil
+	for _, msg := range m.sess.Messages {
+		m.msgs = append(m.msgs, m.formatMsg(msg.Role, msg.Content))
+	}
+	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+	m.vp.GotoBottom()
+}
+
+func (m *Model) formatMsg(role apitypes.Role, content string) string {
+	if role == apitypes.RoleUser {
+		st := lipgloss.NewStyle().Foreground(m.th.Accent).Bold(true)
+		return st.Render("you › ") + content
+	}
+	if role == apitypes.RoleSystem {
+		st := lipgloss.NewStyle().Foreground(m.th.Dim).Italic(true)
+		return st.Render(content)
+	}
+	return renderAssistant(content)
+}
+
+func (m *Model) appendSys(s string) {
+	st := lipgloss.NewStyle().Foreground(m.th.Dim).Background(sysBG).Padding(0, 1)
+	m.msgs = append(m.msgs, st.Render(s))
+	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+	m.vp.GotoBottom()
+}
+
+func (m *Model) initProject() string {
+	dir := filepath.Join(m.workdir, ".ycode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "init failed: " + err.Error()
+	}
+	cfgPath := filepath.Join(dir, "config.yaml")
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		_ = os.WriteFile(cfgPath, []byte("# ycode project overrides\n# active_provider: ollama\n"), 0o644)
+	}
+	agentsPath := filepath.Join(m.workdir, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
+		_ = os.WriteFile(agentsPath, []byte("# Agent instructions\n\n- Be concise.\n- Run tests after edits.\n"), 0o644)
+	}
+	return "Initialized ycode in " + m.workdir + " (.ycode/config.yaml, AGENTS.md)"
+}
+
+func (m *Model) cycleMode(dir int) {
+	order := modes.Order()
+	idx := 0
+	for i, md := range order {
+		if md == m.mode {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + dir + len(order)) % len(order)
+	m.mode = order[idx]
+}
+
+// paletteItems returns the visible completion items (nil when closed).
+func (m *Model) paletteItems() []slashItem {
+	if m.busy || m.palHide {
+		return nil
+	}
+	return filterSlash(m.ta.Value())
+}
+
+func (m *Model) cycleModelCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx)
+		if err != nil || len(ms) == 0 {
+			return sysMsg("No ollama models found — use /models to see options")
+		}
+		idx := 0
+		for i, mi := range ms {
+			if mi.ID == m.cfg.ActiveModel {
+				idx = i
+				break
+			}
+		}
+		next := ms[(idx+1)%len(ms)]
+		return sysMsg(selectModelSilent(m, next.ID))
+	}
+}
+
+// loadMCPsCmd starts configured MCP servers and returns their tools via message.
+func (m *Model) loadMCPsCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		ts, err := m.mcpMgr.Tools(ctx)
+		if err != nil {
+			return mcpLoadedMsg{err: err}
+		}
+		var names []string
+		for _, t := range ts {
+			names = append(names, t.Name())
+		}
+		return mcpLoadedMsg{names: names, tools: ts}
+	}
+}
+
+// reviewCmd streams a single-shot review of diff through the model.
+func (m *Model) reviewCmd(diff string) tea.Cmd {
+	m.busy = true
+	m.stream.Reset()
+	prog := m.prog
+	prompt := "You are a strict code reviewer (" + m.agent.Name + " perspective: " + m.agent.Prompt + "). " +
+		"Review the unified diff below. Output: summary, then per-file findings with file:line, then concrete fixes. Be concise.\n\n```diff\n" + diff + "\n```"
+	hist := []apitypes.Message{{Role: apitypes.RoleUser, Content: prompt}}
+	return func() tea.Msg {
+		w := progWriter{send: func(s string) {
+			if prog != nil {
+				prog.Send(deltaMsg(s))
+			}
+		}}
+		full, err := m.router.Stream(context.Background(), hist, w)
+		if err != nil {
+			return errMsg{err}
+		}
+		return doneMsg{text: "## Code review\n\n" + full}
+	}
+}
+
+func selectModelSilent(m *Model, model string) string { return applyModel(m, "ollama", model) }
+
+// modelsPullCmd pulls an Ollama model in the background.
+func modelsPullCmd(model string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := registry.Pull(context.Background(), model)
+		if err != nil {
+			return sysMsg("pull failed: " + err.Error() + "\n" + out)
+		}
+		return sysMsg("Installed " + model + " — switch with /models " + model)
+	}
+}
+
+// ragIngestCmd builds the repo vector index in the background.
+func (m *Model) ragIngestCmd(root string) tea.Cmd {
+	if root == "" {
+		root = m.workdir
+	}
+	return func() tea.Msg {
+		idx, err := rag.Ingest(context.Background(), m.workdir, root, m.embedder.Embed)
+		if err != nil {
+			return sysMsg("rag ingest failed: " + err.Error())
+		}
+		m.ragIdx = &idx
+		m.ragOff = false
+		return sysMsg(fmt.Sprintf("rag: indexed %d chunks from %s", len(idx.Chunks), root))
+	}
+}
+
+func (m *Model) submit() tea.Cmd {
+	text := strings.TrimSpace(m.ta.Value())
+	m.ta.Reset()
+	if text == "" {
+		return nil
+	}
+	if strings.HasPrefix(text, "/") {
+		name := strings.Fields(text)[0]
+		args := strings.TrimSpace(strings.TrimPrefix(text, name))
+		h, ok := slashRegistry()[name]
+		if !ok {
+			m.appendSys("unknown command: " + name + " (try /help)")
+			return nil
+		}
+		var out string
+		var cmd tea.Cmd
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if e, ok := r.(error); ok && e == ErrQuit {
+						if m.prog != nil {
+							m.prog.Quit()
+						}
+					}
+				}
+			}()
+			out, cmd = h(context.Background(), m, args)
+		}()
+		if out != "" {
+			m.appendSys(out)
+		}
+		return cmd
+	}
+	m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
+	m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleUser, text))
+	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+	m.vp.GotoBottom()
+	m.busy = true
+	m.stream.Reset()
+	hist := append([]apitypes.Message(nil), m.sess.Messages...)
+	userText := text
+	prog := m.prog
+	mode := m.mode
+	ag := m.agent
+	reg := m.toolreg
+	workdir := m.workdir
+	tracker := m.tracker
+	hookset := m.hookset
+	skill := m.pendingSkill
+	m.pendingSkill = ""
+	mcpNames := append([]string(nil), m.mcpNames...)
+	hookset.Fire(context.Background(), hooks.OnRequest, map[string]string{"mode": string(mode), "workdir": workdir})
+	return func() tea.Msg {
+		ctx := context.Background()
+		if mode == modes.Plan {
+			ctx = tools.WithReadOnly(ctx)
+		}
+		zdl := m.cfg.ZeroDataLeak
+		if zdl {
+			ctx = tools.WithZeroLeak(ctx)
+		}
+		toolCalls := 0
+		written := 0
+		toolBytes := 0
+		w := progWriter{send: func(s string) {
+			written += len(s)
+			if prog != nil {
+				prog.Send(deltaMsg(s))
+			}
+		}}
+		onTool := func(name, args, result string, err error) {
+			toolCalls++
+			toolBytes += len(result)
+			status := fmt.Sprintf("ok (%d bytes)", len(result))
+			if err != nil {
+				status = "error: " + err.Error()
+			}
+			audit.Log("tool", map[string]any{"tool": name, "args": truncateArgs(args), "status": status})
+			if prog != nil {
+				prog.Send(toolMsg(fmt.Sprintf("🔧 %s %s → %s", name, truncateArgs(args), status)))
+			}
+		}
+		p, model, err := m.router.Active()
+		if err != nil {
+			return errMsg{err}
+		}
+		sys := modes.SystemPrompt(mode, reg, workdir) + "\nActive agent: " + ag.Name + " — " + ag.Prompt
+		if skill != "" {
+			sys += "\nActive skill instructions:\n" + skill
+		}
+		if mode == modes.Build || mode == modes.Plan {
+			sys += "\nRepo tree (" + workdir + ") — real paths, use them directly:\n" + yctx.Tree(workdir, 150, 4000) +
+				"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
+		}
+		// Local RAG: retrieve repo context when an index exists.
+		ragNote := ""
+		if !m.ragOff {
+			if idx, ok := rag.Load(workdir); ok {
+				if qv, err := m.embedder.Embed(ctx, []string{userText}); err == nil && len(qv) > 0 {
+					if chunks := rag.Query(idx, qv[0], 4); len(chunks) > 0 {
+						sys += "\n" + rag.FormatContext(chunks)
+						ragNote = fmt.Sprintf(" · RAG %d chunks", len(chunks))
+					}
+				} else if err != nil {
+					m.ragOff = true
+					if prog != nil {
+						prog.Send(sysMsg("RAG disabled this session (embed failed: " + err.Error() + ")"))
+					}
+				}
+			}
+		}
+		budget := yctx.BudgetFor(model)
+		trimmed, dropped := yctx.Trim(hist, budget-1500)
+		if dropped > 0 && prog != nil {
+			prog.Send(sysMsg(fmt.Sprintf("…compacted %d older messages to fit context", dropped)))
+		}
+		msgs := append([]apitypes.Message{{Role: apitypes.RoleSystem, Content: sys}}, trimmed...)
+		promptTok := yctx.Estimate(msgs)
+		allowed := modes.AllowedTools(mode, append(mcpNames, m.pluginNames...)...)
+		if zdl {
+			allowed = filterNetworkTools(allowed)
+			sys += "\nZERO-DATA-LEAK: local only. No cloud providers, no browser, no GitHub API."
+			msgs[0].Content = sys
+		}
+		notes := []string{fmt.Sprintf("~%d tokens", promptTok)}
+		var answer string
+		if len(allowed) == 0 {
+			if mode == modes.Chat && fileTaskRe.MatchString(userText) && prog != nil {
+				prog.Send(sysMsg("Tip: I have no file tools in chat mode — hit Tab or /build so I can read/edit files."))
+			}
+			if hit, ok := m.semCache.Lookup(ctx, userText, m.cfg.ActiveProvider, model); ok {
+				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)"}
+			}
+			full, fbNote, err := m.router.StreamWithFallback(ctx, msgs, w)
+			if err != nil {
+				return errMsg{err}
+			}
+			answer = full
+			m.semCache.Store(ctx, userText, full, m.cfg.ActiveProvider, model)
+			if fbNote != "" && prog != nil {
+				prog.Send(sysMsg(fbNote))
+			}
+		} else {
+			type pm struct {
+				p     providers.Provider
+				model string
+				label string
+			}
+			chain := []pm{{p, model, ""}}
+			for _, fb := range m.router.Fallbacks() {
+				if fp, err := m.router.Provider(fb.Provider); err == nil {
+					chain = append(chain, pm{fp, fb.Model, fb.Provider + "/" + fb.Model})
+				}
+			}
+			done := false
+			for i, cand := range chain {
+				if i > 0 && prog != nil {
+					prog.Send(resetStreamMsg{})
+					prog.Send(sysMsg("↳ retrying turn on fallback " + cand.label))
+				}
+				res, err := agent.Run(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool)
+				if err != nil && res.Text == "" {
+					if i < len(chain)-1 {
+						continue
+					}
+					return errMsg{err}
+				}
+				answer = res.Text
+				if err != nil {
+					answer += "\n\n(stopped early: " + err.Error() + ")"
+				}
+				if i > 0 {
+					notes = append(notes, "fell back to "+cand.label)
+				}
+				if toolCalls == 0 && fileTaskRe.MatchString(userText) {
+					notes = append(notes, "no tools were called — rephrase with explicit paths, or try a larger coder model (/models)")
+				}
+				done = true
+				break
+			}
+			if !done {
+				return errMsg{fmt.Errorf("all providers failed")}
+			}
+		}
+		complTok := written/4 + toolBytes/4
+		_ = tracker.Add(m.cfg.ActiveProvider, promptTok, complTok)
+		_, _, usd := tracker.Today()
+		notes = append(notes, fmt.Sprintf("$%.4f today", usd))
+		if ragNote != "" {
+			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
+		}
+		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · ")}
+	}
+}
+
+func truncateArgs(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
+}
+
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.conn != nil {
+		if _, ok := msg.(tea.KeyMsg); ok {
+			cmd := m.updateConnect(msg)
+			if m.conn != nil && m.conn.done {
+				res := m.conn.result
+				m.conn = nil
+				m.appendSys(m.applyConnect(res))
+			}
+			return m, cmd
+		}
+		if _, ok := msg.(fetchModelsMsg); ok {
+			return m, m.updateConnect(msg)
+		}
+	}
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.vp.Width = msg.Width
+		m.vp.Height = msg.Height - 7
+		m.ta.SetWidth(msg.Width - 4)
+		m.winW, m.winH = msg.Width, msg.Height
+		if m.startup == "" {
+			m.startup = theme.Splash(m.th.Accent)
+			m.vp.SetContent(m.startup + "\n\n" + strings.Join(m.msgs, "\n\n"))
+		}
+		return m, nil
+	case deltaMsg:
+		m.stream.WriteString(string(msg))
+		preview := m.formatMsg(apitypes.RoleAssistant, m.stream.String())
+		base := strings.Join(m.msgs, "\n\n")
+		if base != "" {
+			base += "\n\n"
+		}
+		m.vp.SetContent(base + preview)
+		m.vp.GotoBottom()
+		return m, nil
+	case toolMsg:
+		m.appendSys(string(msg))
+		return m, nil
+	case resetStreamMsg:
+		m.stream.Reset()
+		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+		m.vp.GotoBottom()
+		return m, nil
+	case doneMsg:
+		m.busy = false
+		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
+		_ = m.sess.Save()
+		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))
+		m.stream.Reset()
+		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+		m.vp.GotoBottom()
+		if msg.note != "" {
+			m.appendSys(msg.note)
+		}
+		m.hookset.Fire(context.Background(), hooks.OnResponse, map[string]string{"mode": string(m.mode), "workdir": m.workdir})
+		webhooks.Fire("turn_complete", map[string]any{"mode": string(m.mode), "provider": m.cfg.ActiveProvider, "model": m.cfg.ActiveModel})
+		return m, nil
+	case errMsg:
+		m.busy = false
+		m.stream.Reset()
+		m.appendSys("error: " + msg.err.Error())
+		if out := m.hookset.Fire(context.Background(), hooks.OnError, map[string]string{"error": msg.err.Error()}); out != "" {
+			m.appendSys(out)
+		}
+		webhooks.Fire("turn_error", map[string]any{"error": msg.err.Error()})
+		return m, nil
+	case mcpLoadedMsg:
+		if msg.err != nil {
+			m.appendSys("mcp error: " + msg.err.Error())
+			return m, nil
+		}
+		added := 0
+		for _, t := range msg.tools {
+			m.toolreg.Add(t)
+			added++
+		}
+		m.mcpNames = append(m.mcpNames, msg.names...)
+		m.appendSys(fmt.Sprintf("mcp: loaded %d tools", added))
+		return m, nil
+	case sysMsg:
+		m.appendSys(string(msg))
+		return m, nil
+	case editorDoneMsg:
+		if msg.err != nil {
+			m.appendSys("editor error: " + msg.err.Error())
+		} else {
+			m.appendSys("editor closed")
+		}
+		return m, nil
+	case tea.KeyMsg:
+		if pal := m.paletteItems(); len(pal) > 0 {
+			complete := func() {
+				if m.palIdx < 0 || m.palIdx >= len(pal) {
+					m.palIdx = 0
+				}
+				sel := pal[m.palIdx]
+				cur := m.ta.Value()
+				rest := ""
+				if i := strings.IndexByte(cur, ' '); i >= 0 {
+					rest = cur[i:]
+				}
+				m.ta.SetValue(sel.Name + rest + " ")
+				m.palIdx = 0
+			}
+			switch msg.String() {
+			case "up":
+				if m.palIdx > 0 {
+					m.palIdx--
+				} else {
+					m.palIdx = len(pal) - 1
+				}
+				return m, nil
+			case "down":
+				m.palIdx = (m.palIdx + 1) % len(pal)
+				return m, nil
+			case "tab":
+				complete()
+				return m, nil
+			case "enter":
+				if strings.Contains(m.ta.Value(), " ") {
+					break // has args — run it
+				}
+				complete()
+				return m, nil
+			case "esc":
+				m.palHide = true
+				return m, nil
+			default:
+				m.palIdx = 0
+			}
+		}
+		switch msg.String() {
+		case "ctrl+d":
+			_ = m.sess.Save()
+			return m, tea.Quit
+		case "ctrl+c", "esc":
+			if m.busy {
+				m.busy = false
+				m.appendSys("(cancel requested — finishing current step)")
+				return m, nil
+			}
+			_ = m.sess.Save()
+			return m, tea.Quit
+		case "ctrl+n":
+			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
+			_ = m.sess.Save()
+			m.msgs = nil
+			m.vp.SetContent("")
+			m.appendSys("New session started.")
+			return m, nil
+		case "ctrl+o":
+			return m, m.cycleModelCmd()
+		case "tab":
+			m.cycleMode(1)
+			return m, nil
+		case "shift+tab":
+			m.cycleMode(-1)
+			return m, nil
+		case "enter":
+			if m.busy {
+				return m, nil
+			}
+			return m, m.submit()
+		}
+	}
+	var cmd tea.Cmd
+	m.ta, cmd = m.ta.Update(msg)
+	m.vp, _ = m.vp.Update(msg)
+	cmds := []tea.Cmd{cmd}
+	if m.conn != nil && m.conn.step == cStepKey {
+		var c2 tea.Cmd
+		m.conn.keyInput, c2 = m.conn.keyInput.Update(msg)
+		cmds = append(cmds, c2)
+	}
+	if v := m.ta.Value(); v != m.lastInput {
+		m.lastInput = v
+		m.palHide = false
+		m.palIdx = 0
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) View() string {
+	badge := ""
+	if m.cfg.ZeroDataLeak {
+		badge = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff5555")).Render(" [LOCAL ONLY]")
+	}
+	chip := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent).Render("▸ "+string(m.mode)) +
+		lipgloss.NewStyle().Foreground(m.th.Dim).Render(" · "+m.agent.Name+" · tab: switch mode")
+	input := chip + "\n" + m.ta.View()
+	out := m.vp.View() + "\n"
+	if pal := m.paletteItems(); len(pal) > 0 {
+		out += renderPalette(pal, m.palIdx, m.vp.Width, m.th.Accent) + "\n"
+	}
+	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(
+		fmt.Sprintf(" %s/%s · %d msgs · /help ", m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages))) + badge
+	base := out + input + "\n" + status
+	if m.conn != nil {
+		w, h := m.winW, m.winH
+		if w <= 0 {
+			w = 80
+		}
+		if h <= 0 {
+			h = 24
+		}
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, m.conn.view(w-8, m.th.Accent))
+	}
+	return base
+}
+
+func filterNetworkTools(names []string) []string {
+	var out []string
+	for _, n := range names {
+		if n == "browser" || n == "github" {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}

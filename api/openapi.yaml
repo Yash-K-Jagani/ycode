@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: ycode local API
+  version: 0.5.0
+servers:
+  - url: http://localhost:8471
+paths:
+  /healthz:
+    get:
+      summary: Liveness
+      responses:
+        '200':
+          description: ok
+  /v1/models:
+    get:
+      summary: Installed Ollama models + cloud catalog
+      responses:
+        '200':
+          description: model lists
+  /v1/status:
+    get:
+      summary: Active provider/model, cost today, latency
+      responses:
+        '200':
+          description: status
+  /v1/chat:
+    post:
+      summary: Headless chat turn (tools in build/plan modes)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt: { type: string }
+                mode: { type: string, enum: [chat, plan, build, thinking] }
+                agent: { type: string }
+                workdir: { type: string }
+      responses:
+        '200':
+          description: answer

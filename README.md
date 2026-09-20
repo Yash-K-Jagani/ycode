@@ -12,7 +12,7 @@ and refactor code through a real agent tool loop.
 - **Hackable** — skills, script plugins, MCP servers, YAML hooks, automations,
   a local HTTP API + Go SDK, and headless/CI modes.
 
-> Status: v0.6.0-dev. Milestones M1–M6 implemented (see `plan.md`).
+> Status: v0.6.0. Milestones M1–M6 implemented (see `plan.md`).
 
 ---
 
@@ -78,7 +78,7 @@ go build -o ycode ./cmd/ycode     # ./ycode.exe on Windows
 go install ./cmd/ycode            # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.6.0-dev`.
+Verify: `ycode version` → `ycode 0.6.0`.
 
 ---
 

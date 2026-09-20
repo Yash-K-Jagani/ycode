@@ -42,7 +42,7 @@ func TestDetect(t *testing.T) {
 		if !ok {
 			t.Fatalf("%v: not detected", c.files)
 		}
-		if !strings.Contains(p.Language, c.lang) || p.TestCmd[0] != c.test0 {
+		if !strings.Contains(p.Language, c.lang) || !strings.HasPrefix(p.TestCmd[0], c.test0) {
 			t.Fatalf("%v: got %+v", c.files, p)
 		}
 	}

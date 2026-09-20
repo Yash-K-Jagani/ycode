@@ -25,8 +25,8 @@ changelog:
   sort: asc
   filters:
     exclude:
-      - ^docs:
-      - ^test:
+      - "^docs:"
+      - "^test:"
 release:
   github:
     owner: Yash-K-Jagani

@@ -230,8 +230,8 @@ func slashRegistry() map[string]slashHandler {
 			if idx, ok := ragLoad(m); ok {
 				ragInfo = fmt.Sprintf("rag: %d chunks (built %s)", len(idx.Chunks), idx.BuiltAt.Format("2006-01-02 15:04"))
 			}
-			return fmt.Sprintf("mode=%s agent=%s\nprovider=%s model=%s msgs=%d ~tokens=%d\ntoday: %d prompt + %d completion tokens · $%.4f\ncache: %d hits / %d misses (%d items)\n%s\nlatency:\n%s",
-				m.mode, m.agent.Name, m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages), toks, p, c, usd, h, mi, size, ragInfo, m.router.Stats().Summary()), nil
+			return fmt.Sprintf("mode=%s agent=%s store=%s\nprovider=%s model=%s msgs=%d ~tokens=%d\ntoday: %d prompt + %d completion tokens · $%.4f\ncache: %d hits / %d misses (%d items)\n%s\nlatency:\n%s",
+				m.mode, m.agent.Name, sessions.Backend(), m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages), toks, p, c, usd, h, mi, size, ragInfo, m.router.Stats().Summary()), nil
 		},
 		"/connect": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			m.conn = newConnect()

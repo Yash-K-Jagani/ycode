@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 )
 
 // USD per 1K tokens (prompt, completion). Local = free.
@@ -27,11 +29,26 @@ type dayEntry struct {
 type Tracker struct {
 	mu   sync.Mutex
 	file string
+	conn *sql.DB
 	days map[string]*dayEntry
 }
 
 func New() *Tracker {
 	t := &Tracker{file: filepath.Join(config.Dir(), "cost.json"), days: map[string]*dayEntry{}}
+	t.conn = db.Shared()
+	if t.conn != nil {
+		if raw, ok := db.KVGet(t.conn, "cost/days"); ok {
+			_ = json.Unmarshal([]byte(raw), &t.days)
+		} else if data, err := os.ReadFile(t.file); err == nil {
+			// one-time import from legacy JSON
+			_ = json.Unmarshal(data, &t.days)
+			t.persist()
+		}
+		if t.days == nil {
+			t.days = map[string]*dayEntry{}
+		}
+		return t
+	}
 	data, _ := os.ReadFile(t.file)
 	_ = json.Unmarshal(data, &t.days)
 	if t.days == nil {
@@ -54,10 +71,19 @@ func (t *Tracker) Add(provider string, promptTok, complTok int) float64 {
 	e.PromptTok += promptTok
 	e.ComplTok += complTok
 	e.USD += usd
-	_ = os.MkdirAll(config.Dir(), 0o755)
-	data, _ := json.Marshal(t.days)
-	_ = os.WriteFile(t.file, data, 0o644)
+	t.persist()
 	return usd
+}
+
+func (t *Tracker) persist() {
+	data, _ := json.Marshal(t.days)
+	if t.conn != nil {
+		if err := db.KVSet(t.conn, "cost/days", string(data)); err == nil {
+			return
+		}
+	}
+	_ = os.MkdirAll(config.Dir(), 0o755)
+	_ = os.WriteFile(t.file, data, 0o644)
 }
 
 func (t *Tracker) Today() (prompt, compl int, usd float64) {

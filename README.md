@@ -278,7 +278,7 @@ internal/{agents,sessions,context,cache,cost,embed,rag}   # smarts & state
 internal/{mcp,hooks,plugins,skills,prompts}               # integrations
 internal/{audit,security}    # encrypted logs, scanners, redaction
 internal/{headless,batch,automation,serve,webhooks}       # ecosystem runtime
-# (SQLite-backed store is a future addition; state is JSON today)
+# (sessions, cost, latency, batch, memory live in SQLite; RAG/cache/vectors stay files)
 pkg/{apitypes,ycodeclient}/  # shared types + Go SDK
 api/openapi.yaml  configs/  docs/  scripts/  .github/workflows/
 ```
@@ -289,9 +289,10 @@ api/openapi.yaml  configs/  docs/  scripts/  .github/workflows/
 
 ```
 ~/.ycode/
-  config.yaml  keyring.key  ycode.db(future)  cost.json  router.json
-  cache.json  memory.json  batch.json  mcp.json  hooks.yaml  webhooks.yaml
-  automations.yaml  audit/  sessions/  rag/  skills/  plugins/  prompts/
+  config.yaml  keyring.key  ycode.db (sessions, cost, latency, batch, memory)
+  cost.json  router.json  batch.json  memory.json  (legacy, auto-imported once)
+  cache.json  mcp.json  hooks.yaml  webhooks.yaml store.yaml
+  automations.yaml  audit/  sessions/ (legacy)  rag/  skills/  plugins/  prompts/
 <project>/.ycode/  config.yaml  hooks.yaml  automations.yaml  todos.json
 ```
 

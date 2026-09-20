@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/gemini"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/groq"
@@ -150,6 +152,7 @@ type ProviderStat struct {
 type Stats struct {
 	mu         sync.Mutex
 	file       string
+	conn       *sql.DB
 	ByProvider map[string]*ProviderStat `json:"by_provider"`
 }
 
@@ -157,6 +160,19 @@ func statsFile() string { return filepath.Join(config.Dir(), "router.json") }
 
 func NewStats() *Stats {
 	s := &Stats{file: statsFile(), ByProvider: map[string]*ProviderStat{}}
+	s.conn = db.Shared()
+	if s.conn != nil {
+		if raw, ok := db.KVGet(s.conn, "router/stats"); ok {
+			_ = json.Unmarshal([]byte(raw), s)
+		} else if data, err := os.ReadFile(s.file); err == nil {
+			_ = json.Unmarshal(data, s)
+			s.persist()
+		}
+		if s.ByProvider == nil {
+			s.ByProvider = map[string]*ProviderStat{}
+		}
+		return s
+	}
 	data, _ := os.ReadFile(s.file)
 	_ = json.Unmarshal(data, s)
 	if s.ByProvider == nil {
@@ -182,7 +198,16 @@ func (s *Stats) Record(provider string, d time.Duration, tokens int, ok bool) {
 	if d.Seconds() > 0 {
 		st.AvgTokS = float64(st.Tokens) / (float64(st.TotalMs) / 1000)
 	}
+	s.persist()
+}
+
+func (s *Stats) persist() {
 	data, _ := json.Marshal(s)
+	if s.conn != nil {
+		if err := db.KVSet(s.conn, "router/stats", string(data)); err == nil {
+			return
+		}
+	}
 	_ = os.MkdirAll(config.Dir(), 0o755)
 	_ = os.WriteFile(s.file, data, 0o644)
 }

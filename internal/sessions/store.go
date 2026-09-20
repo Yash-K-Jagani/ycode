@@ -3,6 +3,7 @@ package sessions
 import (
 	"database/sql"
 	"os"
+	"path/filepath"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/db"
@@ -26,7 +27,7 @@ func InitDefault() string {
 		backend = jsonStore{}
 		return "json"
 	}
-	conn, err := db.Open(config.Dir() + "/ycode.db")
+	conn, err := db.Open(filepath.Join(config.Dir(), "ycode.db"))
 	if err != nil {
 		backend = jsonStore{}
 		return "json"

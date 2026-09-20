@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 )
 
 type MemoryTool struct {
@@ -33,6 +34,25 @@ func (t *MemoryTool) file() string {
 }
 
 func (t *MemoryTool) load() map[string]string {
+	// Dir override (tests) always uses the JSON file; otherwise prefer SQLite.
+	if t.Dir == "" {
+		if conn := db.Shared(); conn != nil {
+			if raw, ok := db.KVGet(conn, "memory/map"); ok {
+				m := map[string]string{}
+				if _ = json.Unmarshal([]byte(raw), &m); m != nil {
+					return m
+				}
+				return map[string]string{}
+			}
+			// one-time import from legacy file
+			m := map[string]string{}
+			if data, err := os.ReadFile(t.file()); err == nil {
+				_ = json.Unmarshal(data, &m)
+				_ = t.persist(m)
+			}
+			return m
+		}
+	}
 	data, _ := os.ReadFile(t.file())
 	m := map[string]string{}
 	_ = json.Unmarshal(data, &m)
@@ -40,6 +60,18 @@ func (t *MemoryTool) load() map[string]string {
 }
 
 func (t *MemoryTool) save(m map[string]string) error {
+	return t.persist(m)
+}
+
+func (t *MemoryTool) persist(m map[string]string) error {
+	if t.Dir == "" {
+		if conn := db.Shared(); conn != nil {
+			data, _ := json.Marshal(m)
+			if err := db.KVSet(conn, "memory/map", string(data)); err == nil {
+				return nil
+			}
+		}
+	}
 	_ = os.MkdirAll(filepath.Dir(t.file()), 0o755)
 	data, _ := json.MarshalIndent(m, "", "  ")
 	return os.WriteFile(t.file(), data, 0o644)

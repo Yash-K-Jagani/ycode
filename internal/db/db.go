@@ -32,6 +32,11 @@ func Open(path string) (*sql.DB, error) {
 			messages TEXT NOT NULL DEFAULT '[]'
 		)`,
 		`CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT '')`,
+		`CREATE TABLE IF NOT EXISTS batch_jobs (
+			id TEXT PRIMARY KEY,
+			created TEXT NOT NULL DEFAULT '',
+			data TEXT NOT NULL DEFAULT '{}'
+		)`,
 	} {
 		if _, err := conn.Exec(stmt); err != nil {
 			_ = conn.Close()

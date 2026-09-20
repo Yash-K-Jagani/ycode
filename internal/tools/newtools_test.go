@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 )
 
 func TestTree(t *testing.T) {
@@ -71,6 +73,23 @@ func TestMemory(t *testing.T) {
 	}
 	if _, err := mt.Run(WithReadOnly(ctx), json.RawMessage(`{"action":"recall","key":"proj"}`)); err != nil {
 		t.Fatalf("recall should work read-only: %v", err)
+	}
+}
+
+func TestMemorySQLite(t *testing.T) {
+	db.ResetSharedForTest()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Cleanup(db.ResetSharedForTest)
+	mt := &MemoryTool{}
+	ctx := context.Background()
+	if _, err := mt.Run(ctx, json.RawMessage(`{"action":"save","key":"k","text":"v"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (&MemoryTool{}).Run(ctx, json.RawMessage(`{"action":"recall","key":"k"}`))
+	if err != nil || got != "v" {
+		t.Fatalf("kv recall: %q %v", got, err)
 	}
 }
 

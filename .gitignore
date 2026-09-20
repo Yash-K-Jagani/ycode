@@ -1,4 +1,5 @@
-ycode
-ycode.exe
+/ycode
+/ycode.exe
+/dist/
 *.tmp
 .ycode-local/

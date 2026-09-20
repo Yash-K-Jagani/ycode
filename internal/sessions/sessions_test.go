@@ -13,7 +13,7 @@ func TestSQLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	UseSQLite(conn)
 	defer UseJSON()
 
@@ -87,7 +87,7 @@ func TestImportJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	sqlStore := &SQLStore{db: conn}
 	n, err := sqlStore.ImportJSON()
 	if err != nil || n != 1 {

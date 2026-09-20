@@ -77,6 +77,8 @@ type Model struct {
 	palIdx    int
 	palHide   bool
 	lastInput string
+	atIdx     int
+	atHide    bool
 
 	conn       *connectFlow
 	winW, winH int
@@ -112,7 +114,7 @@ var _ io.Writer = progWriter{}
 
 func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir string) Model {
 	ta := textarea.New()
-	ta.Placeholder = "Ask anything…  (/help for commands, Tab switches mode)"
+	ta.Placeholder = "Ask anything…  (/help, Tab modes, @file to attach)"
 	ta.Focus()
 	ta.CharLimit = 8000
 	ta.SetHeight(3)
@@ -211,6 +213,29 @@ func (m *Model) paletteItems() []slashItem {
 		return nil
 	}
 	return filterSlash(m.ta.Value())
+}
+
+// atItems returns @file completion items (nil when closed).
+func (m *Model) atItems() ([]slashItem, string) {
+	if m.busy || m.atHide {
+		return nil, ""
+	}
+	if strings.HasPrefix(strings.TrimSpace(m.ta.Value()), "/") {
+		return nil, ""
+	}
+	token, ok := atToken(m.ta.Value())
+	if !ok {
+		return nil, ""
+	}
+	matches := completeFiles(m.workdir, token)
+	if len(matches) == 0 {
+		return nil, ""
+	}
+	items := make([]slashItem, len(matches))
+	for i, p := range matches {
+		items[i] = slashItem{Name: "@" + p}
+	}
+	return items, token
 }
 
 func (m *Model) cycleModelCmd() tea.Cmd {
@@ -377,6 +402,10 @@ func (m *Model) submit() tea.Cmd {
 		return cmd
 	}
 	m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
+	expanded, missing := expandAttachments(m.workdir, text)
+	for _, miss := range missing {
+		m.appendSys("attachment skipped: " + miss)
+	}
 	m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleUser, text))
 	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 	m.vp.GotoBottom()
@@ -384,6 +413,10 @@ func (m *Model) submit() tea.Cmd {
 	m.stream.Reset()
 	hist := append([]apitypes.Message(nil), m.sess.Messages...)
 	userText := text
+	if expanded != text {
+		userText = expanded
+		hist[len(hist)-1].Content = expanded
+	}
 	prog := m.prog
 	mode := m.mode
 	ag := m.agent
@@ -689,6 +722,45 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.palIdx = 0
 			}
 		}
+		if at, token := m.atItems(); len(at) > 0 {
+			completeAt := func() {
+				if m.atIdx < 0 || m.atIdx >= len(at) {
+					m.atIdx = 0
+				}
+				cur := m.ta.Value()
+				i := strings.LastIndex(cur, "@"+token)
+				if i >= 0 {
+					m.ta.SetValue(cur[:i] + at[m.atIdx].Name + " ")
+				}
+				m.atIdx = 0
+			}
+			switch msg.String() {
+			case "up":
+				if m.atIdx > 0 {
+					m.atIdx--
+				} else {
+					m.atIdx = len(at) - 1
+				}
+				return m, nil
+			case "down":
+				m.atIdx = (m.atIdx + 1) % len(at)
+				return m, nil
+			case "tab":
+				completeAt()
+				return m, nil
+			case "enter":
+				if len(at) == 1 && at[0].Name == "@"+token {
+					break // fully typed — send it
+				}
+				completeAt()
+				return m, nil
+			case "esc":
+				m.atHide = true
+				return m, nil
+			default:
+				m.atIdx = 0
+			}
+		}
 		switch msg.String() {
 		case "ctrl+d":
 			_ = m.sess.Save()
@@ -738,6 +810,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastInput = v
 		m.palHide = false
 		m.palIdx = 0
+		m.atHide = false
+		m.atIdx = 0
 	}
 	return m, tea.Batch(cmds...)
 }
@@ -753,6 +827,8 @@ func (m Model) View() string {
 	out := m.vp.View() + "\n"
 	if pal := m.paletteItems(); len(pal) > 0 {
 		out += renderPalette(pal, m.palIdx, m.vp.Width, m.th.Accent) + "\n"
+	} else if at, _ := m.atItems(); len(at) > 0 {
+		out += renderPalette(at, m.atIdx, m.vp.Width, m.th.Accent) + "\n"
 	}
 	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(
 		fmt.Sprintf(" %s/%s · %d msgs · /help ", m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages))) + badge

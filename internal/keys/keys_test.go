@@ -6,7 +6,7 @@ import (
 
 func TestRoundTrip(t *testing.T) {
 	const acct = "ycode-test-acct"
-	defer Delete(acct)
+	defer func() { _ = Delete(acct) }()
 	if err := Set(acct, "s3cr3t"); err != nil {
 		t.Skipf("no keyring backend: %v", err)
 	}

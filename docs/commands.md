@@ -27,3 +27,6 @@
 | `/plugins [install|reload]` | Script plugins (install accepts git URL, owner/repo, or local dir) |
 
 Modes: **build** (all tools), **plan** (read-only tools), **chat**/**thinking** (no tools).
+
+Type `@` in the input for path completion — attached files are inlined into
+your message (24KB each, 5 max; `@dir` attaches a listing).

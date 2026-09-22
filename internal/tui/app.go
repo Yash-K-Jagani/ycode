@@ -764,6 +764,29 @@ func (m *Model) submit() tea.Cmd {
 				if i > 0 {
 					notes = append(notes, "fell back to "+cand.label)
 				}
+				// Deterministic conversion: bare shell command as the whole
+				// answer (rm/touch) becomes the real tool call — no inference.
+				if toolCalls == 0 {
+					if conv := shellToCalls(answer, userText); len(conv) > 0 {
+						if prog != nil {
+							prog.Send(sysMsg("↳ ran it as a tool instead…"))
+						}
+						results := agent.Exec(ctx, reg, allowed, hookset, conv, onTool)
+						turnCalls += len(conv)
+						okAll := true
+						var parts []string
+						for _, r := range results {
+							if strings.HasPrefix(r, "ERROR:") {
+								okAll = false
+							}
+							parts = append(parts, r)
+						}
+						if okAll {
+							answer = strings.Join(parts, "\n")
+							notes = append(notes, "executed as "+conv[0].Name)
+						}
+					}
+				}
 				// Self-correction: the model dodged acting (pasted content or
 				// roleplayed a result tag instead of emitting the call).
 				// One bounded retry round; the original answer stands unless

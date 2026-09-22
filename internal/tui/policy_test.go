@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLooksLikeWriteTask(t *testing.T) {
 	for _, s := range []string{
@@ -35,6 +38,28 @@ func TestLooksLikeWriteTask(t *testing.T) {
 	}
 	if hasResultRoleplay("just prose") || hasResultRoleplay(`<tool:read>{"a":1}</tool:read>`) {
 		t.Fatal("call tags must not count as roleplay")
+	}
+}
+
+func TestShellToCalls(t *testing.T) {
+	rm := shellToCalls("rm index.html", "delete index.html")
+	if len(rm) != 1 || rm[0].Name != "delete" || !strings.Contains(string(rm[0].Args), "index.html") {
+		t.Fatalf("%+v", rm)
+	}
+	touch := shellToCalls("```touch style.css```", "create style.css")
+	if len(touch) != 1 || touch[0].Name != "write" {
+		t.Fatalf("%+v", touch)
+	}
+	for _, bad := range []string{
+		"rm -rf /", "rm a b", "echo hi", "see rm index.html here",
+		"rm index.html\nsecond line", "",
+	} {
+		if shellToCalls(bad, "delete index.html") != nil {
+			t.Fatalf("must reject %q", bad)
+		}
+	}
+	if shellToCalls("rm index.html", "what is this") != nil {
+		t.Fatal("needs task intent")
 	}
 }
 

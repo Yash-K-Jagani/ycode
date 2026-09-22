@@ -86,6 +86,7 @@ func routing() string {
 		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
 		"\n- delete files only with the delete tool (never bash rm); remove dirs need recursive:true." +
 		"\n- When asked to write/create/edit file content: NEVER paste the content as your answer — ALWAYS emit write/edit tool calls that do it. Pasting content instead of acting is a failure." +
+		"\n- Never answer with a bare shell command (rm/touch/...) as text — always emit the tool call." +
 		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
 		"\n- databases (ask for DSN, never invent): db tables/schema/query. notebooks: notebook cells (execute needs jupyter). REST APIs: api (any method, JSON body)." +
 		"\n- open files in the editor: vscode open. new react/express/fastapi projects: scaffold." +

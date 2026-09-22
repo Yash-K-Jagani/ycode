@@ -243,3 +243,22 @@ func TestDedupRepeats(t *testing.T) {
 		t.Fatalf("plain altered: %q", got)
 	}
 }
+
+func TestExecDirect(t *testing.T) {
+	reg := newTestRegistry()
+	var events []string
+	res := Exec(context.Background(), reg, []string{"echo"}, nil,
+		[]Call{{Name: "echo", Args: json.RawMessage(`{"x":1}`)}},
+		func(name, args, result string, err error) { events = append(events, name) })
+	if len(res) != 1 || !strings.Contains(res[0], "ECHO:") {
+		t.Fatalf("%v", res)
+	}
+	if len(events) != 1 {
+		t.Fatal("onTool not called")
+	}
+	res = Exec(context.Background(), reg, []string{}, nil,
+		[]Call{{Name: "echo", Args: json.RawMessage(`{}`)}}, nil)
+	if !strings.HasPrefix(res[0], "ERROR:") {
+		t.Fatalf("disallowed should error: %v", res)
+	}
+}

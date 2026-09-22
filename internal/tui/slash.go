@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Yash-K-Jagani/ycode/internal/agent"
 	"github.com/Yash-K-Jagani/ycode/internal/agents"
 	"github.com/Yash-K-Jagani/ycode/internal/batch"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
@@ -836,7 +837,7 @@ func doctorReport(ctx context.Context, m *Model) string {
 var fileTaskRe = regexp.MustCompile(`(?i)\b(read|edit|write|create|fix|update|delete|open|list|show|find|search|run|test|clone|review|refactor)\b.*(file|folder|dir|code|repo|test|diff|path|\.\w{1,5}\b)|(\bfile\b|\bfolder\b|\bdirectory\b|\brepo\b)`)
 
 // looksLikeWriteTask matches requests to put content into a file.
-var writeTaskRe = regexp.MustCompile(`(?i)\b(write|create|save|put|add|insert|generate)\b.{0,50}\b(files?|notes?|scripts?|into|in|to|config|readme)\b|\bcreate\s+a\s+file\b`)
+var writeTaskRe = regexp.MustCompile(`(?i)\b(write|create|save|put|add|insert|generate)\b.{0,50}\b(files?|notes?|scripts?|into|in|to|config|readme)\b|\b(create|write|save)\s+(the\s+)?(file|\S+\.\w+)\b|\bcreate\s+a\s+file\b`)
 
 // hasCodeFence reports pasted code content (the write-instead-of-acting dodge).
 func hasCodeFence(s string) bool { return strings.Contains(s, "```") }
@@ -852,6 +853,42 @@ func looksLikeDeleteTask(s string) bool { return deleteTaskRe.MatchString(s) }
 var claimRe = regexp.MustCompile(`(?i)\b(done|deleted|created|wrote|finished|completed|removed|updated)\b`)
 
 func claimsCompletion(s string) bool { return claimRe.MatchString(s) }
+
+// shellCmdRe matches a lone shell command line (the bare-command dodge).
+var shellCmdRe = regexp.MustCompile("^(rm|del|touch)\\s+([^\\s&|;`$()]+)\\s*$")
+
+// shellToCalls converts a bare shell-command answer into real tool calls.
+// Only rm/del (no flags) and touch (empty file) qualify; anything else → nil.
+func shellToCalls(answer, userText string) []agent.Call {
+	clean := strings.TrimSpace(answer)
+	clean = strings.TrimPrefix(clean, "```")
+	for _, fence := range []string{"```sh", "```bash", "```powershell", "```shell"} {
+		clean = strings.TrimPrefix(clean, fence)
+	}
+	clean = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(clean), "```"))
+	lines := strings.Split(clean, "\n")
+	if len(lines) != 1 {
+		return nil
+	}
+	m := shellCmdRe.FindStringSubmatch(strings.TrimSpace(lines[0]))
+	if m == nil || strings.HasPrefix(m[2], "-") {
+		return nil
+	}
+	target := m[2]
+	switch m[1] {
+	case "rm", "del":
+		if !looksLikeDeleteTask(userText) && !fileTaskRe.MatchString(userText) {
+			return nil
+		}
+		return []agent.Call{{Name: "delete", Args: json.RawMessage(`{"path":` + strconv.Quote(target) + `})`)}}
+	case "touch":
+		if !looksLikeWriteTask(userText) {
+			return nil
+		}
+		return []agent.Call{{Name: "write", Args: json.RawMessage(`{"path":` + strconv.Quote(target) + `,"content":""}`)}}
+	}
+	return nil
+}
 
 // buildItRe matches approval/go-ahead messages that should trigger a pending plan.
 var buildItRe = regexp.MustCompile(`(?i)^\s*(build it|build this|now build|go ahead|proceed|do it|implement it|approved?|yes,? build|start building|get (going|started))\b`)

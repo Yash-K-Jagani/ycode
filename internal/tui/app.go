@@ -993,16 +993,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.pendingApproval != nil {
 			switch msg.String() {
-			case "y":
+			case "y", "Y", "enter":
 				m.answerApproval(tools.AllowOnce, "allowed once")
-			case "a":
+			case "a", "A":
 				m.answerApproval(tools.AllowAlways, "always allowed")
-			case "s", "n":
+			case "s", "n", "N":
 				m.answerApproval(tools.DenyOnce, "skipped")
-			case "d":
+			case "d", "D":
 				m.answerApproval(tools.DenyAlways, "never allowed")
 			case "esc":
 				m.answerApproval(tools.DenyOnce, "skipped")
+			case "ctrl+c", "ctrl+d":
+				m.answerApproval(tools.DenyOnce, "skipped")
+			default:
+				return m, nil
+			}
+			if msg.String() == "ctrl+c" || msg.String() == "ctrl+d" {
+				break // let the main switch handle quit-after-deny
 			}
 			return m, nil
 		}

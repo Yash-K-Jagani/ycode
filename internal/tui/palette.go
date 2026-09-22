@@ -133,7 +133,7 @@ func approvalView(req *tools.ApprovalReq, width int, accent lipgloss.Color) stri
 	b.WriteString(title + "\n\n")
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render(req.Tool) + "\n")
 	b.WriteString(lipgloss.NewStyle().Faint(true).Render(args) + "\n\n")
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render("y once · a always · s skip · d never · esc skip"))
+	b.WriteString(lipgloss.NewStyle().Faint(true).Render("enter/y once · a always · s skip · d never · esc skip"))
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Width(width).Padding(0, 1)
 	return box.Render(b.String())
 }

@@ -29,6 +29,7 @@
 | `/store [list|search|install|remove|verify|update]` | Curated skill/plugin store |
 
 Modes: **build** (all tools), **plan** (read-only tools), **chat**/**thinking** (no tools).
+Plan flow: plan mode asks clarifying questions when vague, then writes a plan ending in `AWAITING APPROVAL`. Switch to build and say **build it** to implement the approved plan.
 
 Type `@` in the input for path completion — attached files are inlined into
 your message (24KB each, 5 max; `@dir` attaches a listing).

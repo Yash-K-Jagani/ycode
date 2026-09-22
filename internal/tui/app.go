@@ -90,6 +90,8 @@ type Model struct {
 	turnCancel context.CancelFunc
 	cancelled  bool
 
+	pendingPlan string
+
 	sideOn         bool
 	sessPTok       int
 	sessCTok       int
@@ -636,6 +638,13 @@ func (m *Model) submit() tea.Cmd {
 		if skill != "" {
 			sys += "\nActive skill instructions:\n" + skill
 		}
+		if mode == modes.Build && m.pendingPlan != "" && isBuildIt(userText) {
+			sys += "\nApproved plan from the earlier planning turn (user said build it) — implement it step by step with tools, in order:\n" + m.pendingPlan
+			m.pendingPlan = ""
+			if prog != nil {
+				prog.Send(sysMsg("Building the approved plan…"))
+			}
+		}
 		if mode == modes.Build || mode == modes.Plan {
 			sys += "\nRepo tree (" + workdir + ") — real paths, use them directly:\n" + yctx.Tree(workdir, 150, 4000) +
 				"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
@@ -847,6 +856,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		_ = sessions.MaybeAutoTitle(m.sess)
+		if m.mode == modes.Plan && strings.Contains(msg.text, "AWAITING APPROVAL") {
+			m.pendingPlan = strings.TrimSpace(msg.text)
+		}
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
 		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))
@@ -1049,6 +1061,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
 			_ = m.sess.Save()
 			m.msgs = nil
+			m.pendingPlan = ""
 			m.vp.SetContent("")
 			m.appendSys("New session started.")
 			return m, nil

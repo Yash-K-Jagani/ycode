@@ -192,6 +192,7 @@ func slashRegistry() map[string]slashHandler {
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
 			_ = m.sess.Save()
 			m.msgs = nil
+			m.pendingPlan = ""
 			m.vp.SetContent("")
 			return "New session started.", nil
 		},
@@ -841,6 +842,11 @@ var writeTaskRe = regexp.MustCompile(`(?i)\b(write|create|save|put|add|insert|ge
 func hasCodeFence(s string) bool { return strings.Contains(s, "```") }
 
 func looksLikeWriteTask(s string) bool { return writeTaskRe.MatchString(s) }
+
+// buildItRe matches approval/go-ahead messages that should trigger a pending plan.
+var buildItRe = regexp.MustCompile(`(?i)^\s*(build it|build this|now build|go ahead|proceed|do it|implement it|approved?|yes,? build|start building|get (going|started))\b`)
+
+func isBuildIt(s string) bool { return buildItRe.MatchString(s) }
 
 var resultRoleplayRe = regexp.MustCompile(`(?i)<(write_result|tool_result:[a-z_]+)>`)
 

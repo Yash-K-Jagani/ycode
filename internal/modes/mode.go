@@ -49,7 +49,11 @@ func SystemPrompt(m Mode, reg *tools.Registry, workdir string) string {
 	base += harness()
 	switch m {
 	case Plan:
-		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan. If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly. Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here. Stay on task: don't repeat tool calls that already returned." + toolDocs(reg, AllowedTools(m))
+		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan." +
+			"\nIf the request is ambiguous or missing key facts, FIRST ask up to 3 numbered clarifying questions (concise, each with your best-guess default) and stop — do not plan until the user answers." +
+			" If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly." +
+			" Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here." +
+			" Stay on task: don't repeat tool calls that already returned." + toolDocs(reg, AllowedTools(m))
 	case Build:
 		return base + "\nMODE: BUILD. Use tools to read, write, edit and verify code. After edits, re-read or run tests when sensible." + routing() + toolDocs(reg, AllowedTools(m))
 	case Thinking:

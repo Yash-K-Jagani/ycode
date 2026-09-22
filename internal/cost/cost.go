@@ -20,6 +20,16 @@ var pricing = map[string][2]float64{
 	"ollama":     {0, 0},
 }
 
+// Free reports providers with no metered spend and no caps: local compute
+// is unlimited by design — the tracker records volumes only.
+func Free(provider string) bool {
+	p, ok := pricing[provider]
+	if !ok {
+		return false
+	}
+	return p[0] == 0 && p[1] == 0
+}
+
 type dayEntry struct {
 	PromptTok int     `json:"prompt_tokens"`
 	ComplTok  int     `json:"completion_tokens"`

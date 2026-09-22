@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
@@ -58,7 +59,11 @@ func (m *Model) sidebar(height int) string {
 	b.WriteString(val.Render(ctxBar(m.lastCtx, m.lastCtxB)) + "\n")
 	sec("spent")
 	_, _, today := m.tracker.Today()
-	fmt.Fprintf(&b, "%s\n", val.Render(fmt.Sprintf("$%.4f sess · $%.4f today", m.sessUSD, today)))
+	spend := fmt.Sprintf("$%.4f sess · $%.4f today", m.sessUSD, today)
+	if cost.Free(m.cfg.ActiveProvider) {
+		spend = fmt.Sprintf("free local · $%.4f today (cloud)", today)
+	}
+	fmt.Fprintf(&b, "%s\n", val.Render(spend))
 	sec("tasks")
 	todos := tools.ReadTodos(m.workdir)
 	if len(todos) == 0 {

@@ -114,11 +114,12 @@ list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 | Mode | Tools | Purpose |
 |---|---|---|
 | `build` | all (read/write/edit/bash/git/…) | Implement, edit, run tests |
-| `plan` | read-only subset | Research + numbered plan ending in `AWAITING APPROVAL` |
+| `plan` | read-only subset | Clarifying questions when vague, then numbered plan ending in `AWAITING APPROVAL` |
 | `chat` | none | Plain conversation (file tasks nudge you to `/build`) |
 | `thinking` | none | Visible `<scratchpad>` reasoning, then the answer |
 
-Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor comes from `/agent` (`builder`/`planner`/`reviewer`).
+Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor comes from `/agent`
+(`builder`/`planner`/`reviewer`). Flow: plan in plan mode, switch to build, say **build it** to implement.
 
 ---
 

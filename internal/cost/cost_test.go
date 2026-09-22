@@ -29,3 +29,14 @@ func TestSQLiteCarryOver(t *testing.T) {
 		t.Fatalf("not persisted: %d %d %f", p2, c2, usd2)
 	}
 }
+
+func TestFreeLocal(t *testing.T) {
+	if !Free("ollama") {
+		t.Fatal("ollama must be free/unlimited")
+	}
+	for _, p := range []string{"gemini", "openrouter", "groq", "unknown"} {
+		if Free(p) {
+			t.Fatalf("%s must be metered", p)
+		}
+	}
+}

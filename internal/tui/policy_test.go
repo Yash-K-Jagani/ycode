@@ -37,3 +37,22 @@ func TestLooksLikeWriteTask(t *testing.T) {
 		t.Fatal("call tags must not count as roleplay")
 	}
 }
+
+func TestIsBuildIt(t *testing.T) {
+	for _, s := range []string{
+		"build it", "Build This", "now build", "go ahead", "proceed",
+		"do it", "implement it", "approved", "approve", "yes build",
+		"start building", "get started",
+	} {
+		if !isBuildIt(s) {
+			t.Fatalf("miss: %q", s)
+		}
+	}
+	for _, s := range []string{
+		"what does build do", "rebuild the index", "read go.mod", "",
+	} {
+		if isBuildIt(s) {
+			t.Fatalf("false positive: %q", s)
+		}
+	}
+}

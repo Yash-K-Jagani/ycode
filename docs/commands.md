@@ -8,6 +8,7 @@
 | `/models` | Numbered model list; `/models <n>`, `/models <provider> <model>`, `/models install <ollama-model>` |
 | `/model` | Alias of `/models` |
 | `/export [file]` | Save transcript as markdown |
+| `/tools` | List tools available in the current mode |
 | `/variants` | Installed Ollama variants + quant guidance |
 | `/sessions` | List; `/sessions <id>` resumes (restores its provider/model), `/sessions fork <id>` branches |
 | `/status` | Mode, tokens, cost today, cache, RAG, latency |

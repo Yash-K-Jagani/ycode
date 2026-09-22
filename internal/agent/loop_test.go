@@ -194,3 +194,36 @@ func TestRepeatGuard(t *testing.T) {
 		t.Fatalf("answer should carry the tool result: %q", res.Text)
 	}
 }
+
+func TestIsRepeat(t *testing.T) {
+	if isRepeat("short", "short") {
+		t.Fatal("short texts must not trip")
+	}
+	a := "Here is the full tool list with descriptions. " + strings.Repeat("read reads files grep searches ", 20)
+	b := "Here is the full tool list with descriptions. " + strings.Repeat("read reads files grep searches ", 20)
+	if !isRepeat(normText(a), normText(b)) {
+		t.Fatal("identical long texts should trip")
+	}
+	c := "Completely different short-ish content here " + strings.Repeat("zebra zebra ", 20)
+	if isRepeat(normText(a), normText(c)) {
+		t.Fatal("different texts must not trip")
+	}
+}
+
+func TestProseRepeatStops(t *testing.T) {
+	reg := newTestRegistry()
+	long := "Tools: read, write, edit, grep, glob, bash, git. " + strings.Repeat("Each tool does one job. ", 20) + ` <tool:echo>{"x":1}</tool:echo>`
+	p := &fakeProvider{script: []string{long, long, "never"}}
+	res, err := Run(context.Background(), p, "fake-1",
+		[]apitypes.Message{{Role: apitypes.RoleUser, Content: "hi"}},
+		reg, []string{"echo"}, nil, io.Discard, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rounds != 2 {
+		t.Fatalf("expected stop at round 2, got %d", res.Rounds)
+	}
+	if !strings.Contains(res.Text, "repeating") {
+		t.Fatalf("want stop note: %q", res.Text)
+	}
+}

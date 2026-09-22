@@ -27,7 +27,6 @@ type Call struct {
 }
 
 var toolOpenRe = regexp.MustCompile(`<?tool:([A-Za-z][A-Za-z0-9_]*)>?`)
-
 var (
 	toolBlockRe   = regexp.MustCompile(`(?s)<tool:[A-Za-z][A-Za-z0-9_]*>.*?</tool:[A-Za-z][A-Za-z0-9_]*>`)
 	resultBlockRe = regexp.MustCompile(`(?s)<tool_result:[^>]*>(.*?)</tool_result:[^>]*>`)
@@ -41,6 +40,42 @@ func stripToolTags(s string) string {
 	s = resultBlockRe.ReplaceAllString(s, "$1")
 	s = loneTagRe.ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
+}
+
+// normText collapses a response for repetition comparison.
+func normText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+// isRepeat reports exact or near-duplicate consecutive responses.
+// Short texts are ignored to avoid false positives.
+func isRepeat(cur, prev string) bool {
+	if cur == "" || prev == "" || len(cur) < 150 || len(prev) < 150 {
+		return false
+	}
+	if cur == prev {
+		return true
+	}
+	a, b := wordSet(cur), wordSet(prev)
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	inter := 0
+	for w := range a {
+		if b[w] {
+			inter++
+		}
+	}
+	union := len(a) + len(b) - inter
+	return float64(inter)/float64(union) >= 0.92
+}
+
+func wordSet(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.Fields(s) {
+		out[w] = true
+	}
+	return out
 }
 
 func ParseCalls(text string) []Call {
@@ -122,6 +157,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	totalCalls := 0
 	counts := map[string]int{}
 	cached := map[string]string{}
+	prevNorm := ""
 	for round := 0; round < MaxRounds; round++ {
 		var buf strings.Builder
 		tw := io.MultiWriter(w, &buf)
@@ -140,6 +176,15 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			full = chunk.Delta
 		}
 		last = full
+		norm := normText(full)
+		if isRepeat(norm, prevNorm) {
+			answer := stripToolTags(lastGood)
+			if answer == "" {
+				answer = stripToolTags(full)
+			}
+			return Result{Text: answer + "\n\n(stopped: response repeating — answered from collected results)", Rounds: round + 1, Calls: totalCalls}, nil
+		}
+		prevNorm = norm
 		calls := ParseCalls(full)
 		if len(calls) == 0 {
 			return Result{Text: stripToolTags(full), Rounds: round + 1, Calls: totalCalls}, nil

@@ -160,7 +160,26 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
+		},
+		"/tools": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			names := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
+			if len(names) == 0 {
+				return "No tools in " + string(m.mode) + " mode — switch to /build (all) or /plan (read-only).", nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "Tools available in %s mode (%d):\n", m.mode, len(names))
+			for _, n := range names {
+				desc := ""
+				if t, ok := m.toolreg.Get(n); ok {
+					desc = t.Description()
+					if i := strings.IndexByte(desc, '.'); i >= 0 {
+						desc = desc[:i]
+					}
+				}
+				fmt.Fprintf(&b, "- %s: %s\n", n, desc)
+			}
+			return b.String(), nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if strings.TrimSpace(args) == "fix" {

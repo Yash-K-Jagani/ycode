@@ -87,6 +87,9 @@ type Model struct {
 	watchCancel context.CancelFunc
 	watchTarget string
 
+	turnCancel context.CancelFunc
+	cancelled  bool
+
 	sideOn         bool
 	sessPTok       int
 	sessCTok       int
@@ -328,6 +331,9 @@ func (m *Model) loadMCPsCmd() tea.Cmd {
 func (m *Model) reviewCmd(diff string) tea.Cmd {
 	m.busy = true
 	m.stream.Reset()
+	m.cancelled = false
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	m.turnCancel = turnCancel
 	prog := m.prog
 	prompt := "You are a strict code reviewer (" + m.agent.Name + " perspective: " + m.agent.Prompt + "). " +
 		"Review the unified diff below. Output: summary, then per-file findings with file:line, then concrete fixes. Be concise.\n\n```diff\n" + diff + "\n```"
@@ -338,7 +344,7 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 				prog.Send(deltaMsg(s))
 			}
 		}}
-		full, err := m.router.Stream(context.Background(), hist, w)
+		full, err := m.router.Stream(turnCtx, hist, w)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -353,6 +359,9 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 func (m *Model) reviewPostCmd(diff, repo string, pr int) tea.Cmd {
 	m.busy = true
 	m.stream.Reset()
+	m.cancelled = false
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	m.turnCancel = turnCancel
 	prog := m.prog
 	prompt := "You are a strict code reviewer. Review the unified diff below. " +
 		"Output ONLY raw JSON, no fences, no prose: " +
@@ -365,7 +374,7 @@ func (m *Model) reviewPostCmd(diff, repo string, pr int) tea.Cmd {
 				prog.Send(deltaMsg(s))
 			}
 		}}
-		full, err := m.router.Stream(context.Background(), hist, w)
+		full, err := m.router.Stream(turnCtx, hist, w)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -536,8 +545,11 @@ func (m *Model) submit() tea.Cmd {
 	m.pendingSkill = ""
 	mcpNames := append([]string(nil), m.mcpNames...)
 	hookset.Fire(context.Background(), hooks.OnRequest, map[string]string{"mode": string(mode), "workdir": workdir})
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	m.turnCancel = turnCancel
+	m.cancelled = false
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx := turnCtx
 		if mode == modes.Plan {
 			ctx = tools.WithReadOnly(ctx)
 		}
@@ -721,6 +733,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case deltaMsg:
+		if m.cancelled {
+			return m, nil
+		}
 		m.stream.WriteString(string(msg))
 		preview := m.formatMsg(apitypes.RoleAssistant, m.stream.String())
 		base := strings.Join(m.msgs, "\n\n")
@@ -731,6 +746,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoBottom()
 		return m, nil
 	case toolMsg:
+		if m.cancelled {
+			return m, nil
+		}
 		m.appendSys(string(msg))
 		return m, nil
 	case resetStreamMsg:
@@ -740,6 +758,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doneMsg:
 		m.busy = false
+		m.turnCancel = nil
+		if m.cancelled {
+			m.cancelled = false
+			m.stream.Reset()
+			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+			m.vp.GotoBottom()
+			return m, nil
+		}
 		_ = sessions.MaybeAutoTitle(m.sess)
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
@@ -768,6 +794,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case errMsg:
 		m.busy = false
+		m.turnCancel = nil
+		if m.cancelled {
+			m.cancelled = false
+			m.stream.Reset()
+			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+			m.vp.GotoBottom()
+			return m, nil
+		}
 		m.stream.Reset()
 		m.appendSys("error: " + msg.err.Error())
 		if out := m.hookset.Fire(context.Background(), hooks.OnError, map[string]string{"error": msg.err.Error()}); out != "" {
@@ -777,6 +811,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case reviewPostDone:
 		m.busy = false
+		m.turnCancel = nil
+		if m.cancelled {
+			m.cancelled = false
+			m.stream.Reset()
+			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+			m.vp.GotoBottom()
+			return m, nil
+		}
 		m.stream.Reset()
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
@@ -908,7 +950,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc":
 			if m.busy {
 				m.busy = false
-				m.appendSys("(cancel requested — finishing current step)")
+				m.cancelled = true
+				if m.turnCancel != nil {
+					m.turnCancel()
+					m.turnCancel = nil
+				}
+				m.stream.Reset()
+				m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+				m.vp.GotoBottom()
+				m.appendSys("(stopped — partial output discarded, Ctrl+C/Esc again to quit)")
 				return m, nil
 			}
 			_ = m.sess.Save()

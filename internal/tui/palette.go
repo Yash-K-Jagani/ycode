@@ -31,6 +31,7 @@ func slashList() []slashItem {
 		{"/build", "build mode"},
 		{"/chat", "chat mode"},
 		{"/thinking", "thinking mode"},
+		{"/tools", "list available tools"},
 		{"/review", "AI review of diff"},
 		{"/test", "run project tests"},
 		{"/refactor", "safe refactoring"},

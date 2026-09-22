@@ -6,9 +6,9 @@ $BinDir = if ($env:BIN_DIR) { $env:BIN_DIR } else { "$env:LOCALAPPDATA\ycode\bin
 $Arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { throw "32-bit not supported" }
 $Tag = if ($env:YCODE_VERSION) { $env:YCODE_VERSION } else { "latest" }
 if ($Tag -eq "latest") {
-  $Url = "https://github.com/$Repo/releases/latest/download/ycode_Windows_${Arch}.tar.gz"
+  $Url = "https://github.com/$Repo/releases/latest/download/ycode_windows_${Arch}.tar.gz"
 } else {
-  $Url = "https://github.com/$Repo/releases/download/$Tag/ycode_Windows_${Arch}.tar.gz"
+  $Url = "https://github.com/$Repo/releases/download/$Tag/ycode_windows_${Arch}.tar.gz"
 }
 Write-Host "downloading $Url"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null

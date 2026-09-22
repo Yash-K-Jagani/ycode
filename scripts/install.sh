@@ -12,15 +12,14 @@ case "$ARCH" in
   *) echo "unsupported arch: $ARCH"; exit 1 ;;
 esac
 case "$OS" in
-  linux) GOS="Linux" ;;
-  darwin) GOS="Darwin" ;;
+  linux|darwin) ;;
   *) echo "unsupported os: $OS (use install.ps1 on Windows)"; exit 1 ;;
 esac
 TAG="${YCODE_VERSION:-latest}"
 if [ "$TAG" = "latest" ]; then
-  URL="https://github.com/$REPO/releases/latest/download/ycode_${GOS}_${ARCH}.tar.gz"
+  URL="https://github.com/$REPO/releases/latest/download/ycode_${OS}_${ARCH}.tar.gz"
 else
-  URL="https://github.com/$REPO/releases/download/$TAG/ycode_${GOS}_${ARCH}.tar.gz"
+  URL="https://github.com/$REPO/releases/download/$TAG/ycode_${OS}_${ARCH}.tar.gz"
 fi
 echo "downloading $URL"
 mkdir -p "$BIN_DIR"

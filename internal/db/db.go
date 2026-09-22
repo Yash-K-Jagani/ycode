@@ -37,6 +37,22 @@ func Open(path string) (*sql.DB, error) {
 			created TEXT NOT NULL DEFAULT '',
 			data TEXT NOT NULL DEFAULT '{}'
 		)`,
+		`CREATE TABLE IF NOT EXISTS rag_chunks (
+			wkey TEXT NOT NULL,
+			path TEXT NOT NULL,
+			text TEXT NOT NULL,
+			vec TEXT NOT NULL DEFAULT '[]',
+			PRIMARY KEY (wkey, path, text)
+		)`,
+		`CREATE TABLE IF NOT EXISTS cache_items (
+			provider TEXT NOT NULL,
+			model TEXT NOT NULL,
+			prompt TEXT NOT NULL,
+			answer TEXT NOT NULL DEFAULT '',
+			vec TEXT NOT NULL DEFAULT '[]',
+			at TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (provider, model, prompt)
+		)`,
 	} {
 		if _, err := conn.Exec(stmt); err != nil {
 			_ = conn.Close()

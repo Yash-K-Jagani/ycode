@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"crypto/sha1"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 	"github.com/Yash-K-Jagani/ycode/internal/embed"
 )
 
@@ -35,8 +37,12 @@ type Index struct {
 }
 
 func indexPath(workdir string) string {
+	return filepath.Join(config.Dir(), "rag", workKey(workdir)+".json")
+}
+
+func workKey(workdir string) string {
 	h := sha1.Sum([]byte(workdir))
-	return filepath.Join(config.Dir(), "rag", fmt.Sprintf("%x.json", h[:8]))
+	return fmt.Sprintf("%x", h[:8])
 }
 
 func ChunkText(path, text string) []Chunk {
@@ -128,6 +134,11 @@ func Ingest(ctx context.Context, workdir, root string, embedFn func(ctx context.
 }
 
 func saveIndex(workdir string, idx Index) error {
+	if conn := db.Shared(); conn != nil {
+		if err := saveIndexSQL(conn, workdir, idx); err == nil {
+			return nil
+		}
+	}
 	p := indexPath(workdir)
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	data, err := json.Marshal(idx)
@@ -141,7 +152,77 @@ func saveIndex(workdir string, idx Index) error {
 	return os.Rename(tmp, p)
 }
 
+func saveIndexSQL(conn *sql.DB, workdir string, idx Index) error {
+	key := workKey(workdir)
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM rag_chunks WHERE wkey=?`, key); err != nil {
+		return err
+	}
+	for _, c := range idx.Chunks {
+		vec, _ := json.Marshal(c.Vec)
+		if _, err := tx.Exec(`INSERT INTO rag_chunks(wkey,path,text,vec) VALUES(?,?,?,?)`,
+			key, c.Path, c.Text, string(vec)); err != nil {
+			return err
+		}
+	}
+	built, _ := json.Marshal(idx.BuiltAt)
+	if _, err := tx.Exec(`INSERT INTO kv(k,v) VALUES(?,?)
+		ON CONFLICT(k) DO UPDATE SET v=excluded.v`, "rag/built/"+key, string(built)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func Load(workdir string) (Index, bool) {
+	return loadIndex(workdir)
+}
+
+func loadIndex(workdir string) (Index, bool) {
+	if conn := db.Shared(); conn != nil {
+		if idx, ok := loadIndexSQL(conn, workdir); ok {
+			return idx, true
+		}
+		// one-time import from legacy JSON
+		if idx, ok := loadIndexFile(workdir); ok {
+			_ = saveIndexSQL(conn, workdir, idx)
+			return idx, true
+		}
+		return Index{}, false
+	}
+	return loadIndexFile(workdir)
+}
+
+func loadIndexSQL(conn *sql.DB, workdir string) (Index, bool) {
+	key := workKey(workdir)
+	rows, err := conn.Query(`SELECT path,text,vec FROM rag_chunks WHERE wkey=?`, key)
+	if err != nil {
+		return Index{}, false
+	}
+	defer func() { _ = rows.Close() }()
+	idx := Index{Workdir: workdir}
+	for rows.Next() {
+		var c Chunk
+		var vec string
+		if err := rows.Scan(&c.Path, &c.Text, &vec); err != nil {
+			continue
+		}
+		_ = json.Unmarshal([]byte(vec), &c.Vec)
+		idx.Chunks = append(idx.Chunks, c)
+	}
+	if err := rows.Err(); err != nil || len(idx.Chunks) == 0 {
+		return Index{}, false
+	}
+	if raw, ok := db.KVGet(conn, "rag/built/"+key); ok {
+		_ = json.Unmarshal([]byte(raw), &idx.BuiltAt)
+	}
+	return idx, true
+}
+
+func loadIndexFile(workdir string) (Index, bool) {
 	data, err := os.ReadFile(indexPath(workdir))
 	if err != nil {
 		return Index{}, false

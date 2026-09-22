@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 	"github.com/Yash-K-Jagani/ycode/internal/embed"
 )
 
@@ -41,6 +42,11 @@ func TestChunkText(t *testing.T) {
 }
 
 func TestIngestQuery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetSharedForTest()
+	t.Cleanup(db.ResetSharedForTest)
 	dir := t.TempDir()
 	write := func(name, content string) {
 		p := filepath.Join(dir, name)
@@ -71,6 +77,32 @@ func TestIngestQuery(t *testing.T) {
 	}
 	if FormatContext(top) == "" {
 		t.Fatal("empty format")
+	}
+}
+
+func TestSQLSaveLoad(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetSharedForTest()
+	t.Cleanup(db.ResetSharedForTest)
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "apple.go"), []byte("package apple\n// apple apple apple\nfunc Apple() {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "zebra.go"), []byte("package zebra\n// zebra zebra zebra\nfunc Zebra() {}\n"), 0o644)
+	idx, err := Ingest(context.Background(), dir, dir, fakeEmbed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.Chunks) == 0 {
+		t.Fatal("no chunks")
+	}
+	loaded, ok := Load(dir)
+	if !ok || len(loaded.Chunks) != len(idx.Chunks) {
+		t.Fatalf("sql load: %v %d", ok, len(loaded.Chunks))
+	}
+	qv, _ := fakeEmbed(context.Background(), []string{"apple apple"})
+	if top := Query(loaded, qv[0], 1); len(top) != 1 {
+		t.Fatal("no retrieval from sql index")
 	}
 }
 

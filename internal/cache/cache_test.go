@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Yash-K-Jagani/ycode/internal/db"
 )
 
 func fakeEmbed(ctx context.Context, inputs []string) ([][]float64, error) {
@@ -21,8 +23,7 @@ func fakeEmbed(ctx context.Context, inputs []string) ([][]float64, error) {
 	return vecs, nil
 }
 
-func TestExactAndSemantic(t *testing.T) {
-	c := NewAt(filepath.Join(t.TempDir(), "cache.json"), fakeEmbed)
+func TestExactAndSemantic(t *testing.T) {	c := NewAt(filepath.Join(t.TempDir(), "cache.json"), fakeEmbed)
 	c.items = nil
 	ctx := context.Background()
 	c.Store(ctx, "aaa bbb", "answer-1", "ollama", "m")
@@ -44,5 +45,24 @@ func TestExactAndSemantic(t *testing.T) {
 	h, m_, _ := c.Stats()
 	if h != 2 || m_ != 2 {
 		t.Fatalf("bad stats: %d/%d", h, m_)
+	}
+}
+
+func TestSQLPersist(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	db.ResetSharedForTest()
+	t.Cleanup(db.ResetSharedForTest)
+	c := New(fakeEmbed)
+	ctx := context.Background()
+	c.Store(ctx, "aaa bbb", "answer-1", "ollama", "m")
+	c2 := New(fakeEmbed)
+	if a, ok := c2.Lookup(ctx, "aaa bbb", "ollama", "m"); !ok || a != "answer-1" {
+		t.Fatalf("sql persist miss: %q %v", a, ok)
+	}
+	c2.Clear()
+	if _, ok := New(fakeEmbed).Lookup(ctx, "aaa bbb", "ollama", "m"); ok {
+		t.Fatal("clear did not wipe sql rows")
 	}
 }

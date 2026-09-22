@@ -42,6 +42,58 @@ func List() ([]Session, error) { return backend.List() }
 
 func Load(id string) (*Session, error) { return backend.Load(id) }
 
+func Delete(id string) error { return backend.Delete(id) }
+
+// PruneIDs returns IDs beyond the newest keep sessions (list must be newest-first).
+func PruneIDs(list []Session, keep int) []string {
+	if keep < 0 {
+		keep = 0
+	}
+	var out []string
+	for i, s := range list {
+		if i >= keep {
+			out = append(out, s.ID)
+		}
+	}
+	return out
+}
+
+// MaybeAutoTitle replaces timestamp titles with a short derived title once
+// the first exchange exists. Returns true when it changed anything.
+func MaybeAutoTitle(s *Session) bool {
+	if !strings.HasPrefix(s.Title, "session ") {
+		return false
+	}
+	for _, m := range s.Messages {
+		if m.Role != apitypes.RoleUser {
+			continue
+		}
+		if t := DeriveTitle(m.Content); t != "" {
+			s.Title = t
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// DeriveTitle condenses a user message into a ≤40-char title.
+func DeriveTitle(text string) string {
+	t := strings.TrimSpace(text)
+	t = strings.TrimPrefix(t, "/")
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		t = t[:i]
+	}
+	t = strings.Join(strings.Fields(t), " ")
+	if t == "" {
+		return ""
+	}
+	if len(t) > 40 {
+		t = t[:40] + "…"
+	}
+	return t
+}
+
 // Fork duplicates a session under a new ID (history shared, future diverges).
 func Fork(id string) (*Session, error) {
 	src, err := backend.Load(id)

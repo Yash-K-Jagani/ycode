@@ -56,6 +56,11 @@ func (s *SQLStore) Load(id string) (*Session, error) {
 	return &sess, err
 }
 
+func (s *SQLStore) Delete(id string) error {
+	_, err := s.db.Exec(`DELETE FROM sessions WHERE id=?`, id)
+	return err
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

@@ -733,6 +733,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doneMsg:
 		m.busy = false
+		_ = sessions.MaybeAutoTitle(m.sess)
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
 		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))

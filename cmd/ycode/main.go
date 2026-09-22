@@ -511,7 +511,7 @@ func doctorCmd() *cobra.Command {
 	return c
 }
 
-var Version = "0.9.0"
+var Version = "0.10.0"
 
 func versionCmd() *cobra.Command {
 	return &cobra.Command{

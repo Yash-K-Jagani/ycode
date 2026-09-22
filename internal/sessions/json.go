@@ -54,4 +54,12 @@ func (jsonStore) Load(id string) (*Session, error) {
 	return &s, nil
 }
 
+func (jsonStore) Delete(id string) error {
+	err := os.Remove(filepath.Join(dir(), id+".json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 func (jsonStore) all() ([]Session, error) { return jsonStore{}.List() }

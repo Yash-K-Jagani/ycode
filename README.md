@@ -12,7 +12,7 @@ and refactor code through a real agent tool loop.
 - **Hackable** — skills, script plugins, MCP servers, YAML hooks, automations,
   a local HTTP API + Go SDK, and headless/CI modes.
 
-> Status: v0.9.0. Milestones M1–M6 implemented (see `plan.md`).
+> Status: v0.10.0. Milestones M1–M6 implemented (see `plan.md`).
 
 ---
 
@@ -78,7 +78,7 @@ go build -o ycode ./cmd/ycode     # ./ycode.exe on Windows
 go install ./cmd/ycode            # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.9.0`.
+Verify: `ycode version` → `ycode 0.10.0`.
 
 ---
 
@@ -132,7 +132,7 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/models` | Numbered model list; `/models <n>`, `/models <provider> <model>`, fuzzy names, `/models install <ollama-model>` (`ollama pull`) |
 | `/model` | Alias of `/models` |
 | `/variants` | Installed Ollama variants + VRAM/quant guidance |
-| `/sessions` | List; `/sessions <id>` resumes incl. its provider/model; `/sessions fork <id>` branches |
+| `/sessions` | List (auto-titled); resume, `fork <id>`, `search <q>`, `prune [N] [--yes]` |
 | `/export [file]` | Save transcript as markdown |
 | `/status` | Mode, tokens, cost today, cache hits, RAG index, latency |
 | `/connect` | Interactive window: provider → API key/host → model picker |
@@ -318,7 +318,7 @@ Conventions: small focused packages, table-less unit tests per package,
 ## 17. Releases & CI
 
 - `.goreleaser.yaml`: `ycode_<os>_<arch>.tar.gz` for linux/windows/darwin ×
-  amd64/arm64. Tag to release: `git tag v0.9.0 && git push origin v0.9.0`.
+  amd64/arm64. Tag to release: `git tag v0.10.0 && git push origin v0.10.0`.
 - `.github/workflows/ci.yml`: build matrix (Go × OS) + `go vet`/`go test` +
   golangci-lint + `ycode ci` review on PRs.
 

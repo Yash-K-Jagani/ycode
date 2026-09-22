@@ -14,6 +14,7 @@ type Store interface {
 	Save(*Session) error
 	List() ([]Session, error)
 	Load(id string) (*Session, error)
+	Delete(id string) error
 	Backend() string
 }
 

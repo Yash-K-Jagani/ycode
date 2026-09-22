@@ -186,6 +186,58 @@ func slashRegistry() map[string]slashHandler {
 				m.renderAll()
 				return "Forked as " + fork.Title + " (" + fork.ID + ") — original untouched.", nil
 			}
+			if f := strings.Fields(args); len(f) >= 1 && f[0] == "search" {
+				q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "search")))
+				list, err := sessions.List()
+				if err != nil {
+					return "sessions: " + err.Error(), nil
+				}
+				var b strings.Builder
+				n := 0
+				for _, s := range list {
+					hay := strings.ToLower(s.ID + " " + s.Title + " " + s.Provider + " " + s.Model)
+					if q != "" && !strings.Contains(hay, q) {
+						continue
+					}
+					fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
+					if n++; n >= 15 {
+						break
+					}
+				}
+				if n == 0 {
+					return "No sessions match " + strconv.Quote(q), nil
+				}
+				return b.String(), nil
+			}
+			if f := strings.Fields(args); len(f) >= 1 && f[0] == "prune" {
+				keep := 30
+				confirmed := false
+				for _, tok := range f[1:] {
+					if tok == "--yes" {
+						confirmed = true
+					} else if n, err := strconv.Atoi(tok); err == nil && n >= 0 {
+						keep = n
+					}
+				}
+				list, err := sessions.List()
+				if err != nil {
+					return "sessions: " + err.Error(), nil
+				}
+				ids := sessions.PruneIDs(list, keep)
+				if len(ids) == 0 {
+					return fmt.Sprintf("%d sessions, nothing to prune (keeping %d).", len(list), keep), nil
+				}
+				if !confirmed {
+					return fmt.Sprintf("Would delete %d oldest sessions (keeping %d). Re-run with --yes.", len(ids), keep), nil
+				}
+				n := 0
+				for _, id := range ids {
+					if sessions.Delete(id) == nil {
+						n++
+					}
+				}
+				return fmt.Sprintf("Pruned %d sessions, %d kept.", n, len(list)-len(ids)), nil
+			}
 			if args != "" {
 				s, err := sessions.Load(strings.TrimSpace(args))
 				if err != nil {
@@ -214,7 +266,7 @@ func slashRegistry() map[string]slashHandler {
 				}
 				fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
 			}
-			b.WriteString("Use: /sessions <id> to resume, /sessions fork <id> to branch")
+			b.WriteString("Use: /sessions <id> to resume, /sessions fork <id>, /sessions search <q>, /sessions prune [N] [--yes]")
 			return b.String(), nil
 		},
 		"/export": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {

@@ -49,6 +49,12 @@ func TestSQLRoundTrip(t *testing.T) {
 	if got.Model != "m2" {
 		t.Fatal("upsert failed")
 	}
+	if err := Delete(s.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(s.ID); err == nil {
+		t.Fatal("delete failed")
+	}
 }
 
 func TestJSONFallbackStillWorks(t *testing.T) {
@@ -146,5 +152,74 @@ func TestForkExport(t *testing.T) {
 		if !strings.Contains(md, want) {
 			t.Fatalf("export missing %q:\n%s", want, md)
 		}
+	}
+}
+
+func TestDeriveAndAutoTitle(t *testing.T) {
+	if got := DeriveTitle("  /build  fix login bug\nsecond line"); got != "build fix login bug" {
+		t.Fatalf("%q", got)
+	}
+	long := strings.Repeat("a", 50)
+	if got := DeriveTitle(long); len(got) != 43 { // 40 + …
+		t.Fatalf("%q", got)
+	}
+	if DeriveTitle("   ") != "" {
+		t.Fatal("blank")
+	}
+	s := &Session{Title: "session 2026-01-01 00:00"}
+	if MaybeAutoTitle(s) {
+		t.Fatal("no messages → no change")
+	}
+	s.Messages = []apitypes.Message{{Role: apitypes.RoleUser, Content: "read go.mod"}}
+	if !MaybeAutoTitle(s) || s.Title != "read go.mod" {
+		t.Fatalf("%+v", s)
+	}
+	if MaybeAutoTitle(s) {
+		t.Fatal("already titled → no change")
+	}
+	custom := &Session{Title: "mine"}
+	custom.Messages = []apitypes.Message{{Role: apitypes.RoleUser, Content: "x"}}
+	if MaybeAutoTitle(custom) {
+		t.Fatal("custom title must stick")
+	}
+}
+
+func TestPruneIDsAndDelete(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	UseJSON()
+	defer UseJSON()
+	var ids []string
+	for i := 0; i < 5; i++ {
+		s := New("ollama", "m")
+		s.Title = strings.Repeat("t", i+1)
+		if err := s.Save(); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, s.ID)
+	}
+	_ = ids
+	list, err := List()
+	if err != nil || len(list) != 5 {
+		t.Fatalf("%v %d", err, len(list))
+	}
+	drop := PruneIDs(list, 2)
+	if len(drop) != 3 {
+		t.Fatalf("%v", drop)
+	}
+	for _, id := range drop {
+		if err := Delete(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if list, _ := List(); len(list) != 2 {
+		t.Fatalf("kept %d", len(list))
+	}
+	if err := Delete("missing"); err != nil {
+		t.Fatalf("missing delete should be nil: %v", err)
+	}
+	if len(PruneIDs(list, 10)) != 0 {
+		t.Fatal("nothing to prune")
 	}
 }

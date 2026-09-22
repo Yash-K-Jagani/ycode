@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Yash-K-Jagani/ycode/internal/agents"
+	"github.com/Yash-K-Jagani/ycode/internal/batch"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/mcp"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
@@ -161,6 +162,9 @@ func slashRegistry() map[string]slashHandler {
 			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			if strings.TrimSpace(args) == "fix" {
+				return doctorFix(m), nil
+			}
 			return doctorReport(ctx, m), nil
 		},
 		"/exit": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { panic(ErrQuit) },
@@ -279,6 +283,15 @@ func slashRegistry() map[string]slashHandler {
 		},
 		"/review": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			spec := strings.TrimSpace(args)
+			postPR := 0
+			if f := strings.Fields(spec); len(f) >= 2 && f[0] == "--post" {
+				n, err := strconv.Atoi(f[1])
+				if err != nil || n <= 0 {
+					return "Usage: /review [--post <pr>] [path]", nil
+				}
+				postPR = n
+				spec = strings.TrimSpace(strings.TrimPrefix(spec, "--post "+f[1]))
+			}
 			diffArgs := map[string]string{"action": "diff"}
 			if spec != "" {
 				diffArgs["args"] = spec
@@ -293,6 +306,14 @@ func slashRegistry() map[string]slashHandler {
 			}
 			if len(out) > 30*1024 {
 				out = out[:30*1024] + "\n…(diff truncated)"
+			}
+			if postPR > 0 {
+				owner, repo, err := tools.GitHubRepo(m.workdir)
+				if err != nil {
+					return "review --post: " + err.Error(), nil
+				}
+				m.appendSys(fmt.Sprintf("Reviewing diff for PR #%d (%s/%s)…", postPR, owner, repo))
+				return "", m.reviewPostCmd(out, owner+"/"+repo, postPR)
 			}
 			m.appendSys("Reviewing diff (" + fmt.Sprintf("%d bytes", len(out)) + ")…")
 			return "", m.reviewCmd(out)
@@ -636,6 +657,22 @@ func slashRegistry() map[string]slashHandler {
 			return b.String(), nil
 		},
 	}
+}
+
+func doctorFix(m *Model) string {
+	var b strings.Builder
+	b.WriteString("doctor fix:\n")
+	m.semCache.Clear()
+	b.WriteString("- semantic cache cleared\n")
+	n := batch.Load().Clear(true)
+	fmt.Fprintf(&b, "- batch: cleared %d finished jobs\n", n)
+	if err := m.cfg.Save(); err != nil {
+		fmt.Fprintf(&b, "- config save FAILED: %v\n", err)
+	} else {
+		b.WriteString("- config re-saved ok\n")
+	}
+	b.WriteString("Re-run /doctor to verify.")
+	return b.String()
 }
 
 func doctorReport(ctx context.Context, m *Model) string {

@@ -151,3 +151,50 @@ func TestZeroLeakBlocks(t *testing.T) {
 		_ = err // path may not exist; only block-type matters
 	}
 }
+
+func TestGitHubRepo(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("remote", "add", "origin", "https://github.com/Owner/Repo.git")
+	owner, repo, err := GitHubRepo(dir)
+	if err != nil || owner != "Owner" || repo != "Repo" {
+		t.Fatalf("%q %q %v", owner, repo, err)
+	}
+	run("remote", "set-url", "origin", "git@github.com:O2/R2.git")
+	owner, repo, err = GitHubRepo(dir)
+	if err != nil || owner != "O2" || repo != "R2" {
+		t.Fatalf("ssh: %q %q %v", owner, repo, err)
+	}
+	if _, _, err := GitHubRepo(t.TempDir()); err == nil {
+		t.Fatal("expected no-origin error")
+	}
+}
+
+func TestReviewPostValidation(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	g := &GitHubTool{Workdir: t.TempDir()}
+	ctx := context.Background()
+	if _, err := g.Run(ctx, json.RawMessage(`{"action":"review_post"}`)); err == nil {
+		t.Fatal("expected repo/number error")
+	}
+	args := `{"action":"review_post","repo":"a/b","number":1,"review":{"summary":"s","comments":[{"path":"f","line":0,"body":"x"}]}}`
+	if _, err := g.Run(ctx, json.RawMessage(args)); err == nil {
+		t.Fatal("expected bad-line error")
+	}
+	args2 := `{"action":"review_post","repo":"a/b","number":1,"review":{"summary":"s","comments":[{"path":"f","line":3,"body":"x"}]}}`
+	if _, err := g.Run(ctx, json.RawMessage(args2)); err == nil || !strings.Contains(err.Error(), "GH_TOKEN") {
+		t.Fatalf("expected token error, got %v", err)
+	}
+	if _, err := g.Run(WithReadOnly(ctx), json.RawMessage(args2)); err == nil {
+		t.Fatal("expected read-only block")
+	}
+}

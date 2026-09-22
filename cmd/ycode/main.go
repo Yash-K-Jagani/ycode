@@ -20,6 +20,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/audit"
 	"github.com/Yash-K-Jagani/ycode/internal/automation"
 	"github.com/Yash-K-Jagani/ycode/internal/batch"
+	"github.com/Yash-K-Jagani/ycode/internal/cache"
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/headless"
@@ -38,7 +39,7 @@ import (
 
 func main() {
 	root := &cobra.Command{Use: "ycode", Short: "AI coding harness (M6: hardened + ecosystem)"}
-	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd())
+	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd())
 	if len(os.Args) > 1 {
 		_ = root.Execute()
 		return
@@ -468,12 +469,46 @@ func storeCmd() *cobra.Command {
 	)
 	return c
 }
-
 func truncate(s string, n int) string {
 	if len(s) > n {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+func doctorCmd() *cobra.Command {
+	var fix bool
+	c := &cobra.Command{
+		Use:   "doctor",
+		Short: "Health check (Ollama, models, config)",
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg, _ := config.Load()
+			fmt.Printf("provider=%s model=%s zero_data_leak=%v\n", cfg.ActiveProvider, cfg.ActiveModel, cfg.ZeroDataLeak)
+			if ms, err := ollama.New(cfg.OllamaHost).ListModels(context.Background()); err != nil {
+				fmt.Println("ollama: UNREACHABLE (" + err.Error() + ")")
+			} else {
+				fmt.Printf("ollama: ok (%d models)\n", len(ms))
+			}
+			if _, err := os.Stat(config.Dir()); err != nil {
+				fmt.Println("config dir: MISSING (" + config.Dir() + ")")
+			} else {
+				fmt.Println("config dir: " + config.Dir())
+			}
+			if !fix {
+				return
+			}
+			cache.New(nil).Clear()
+			fmt.Println("fix: semantic cache cleared")
+			fmt.Printf("fix: batch cleared %d finished jobs\n", batch.Load().Clear(true))
+			if err := cfg.Save(); err != nil {
+				fmt.Println("fix: config save FAILED:", err)
+			} else {
+				fmt.Println("fix: config re-saved ok")
+			}
+		},
+	}
+	c.Flags().BoolVar(&fix, "fix", false, "auto-fix: clear cache + finished jobs, re-save config")
+	return c
 }
 
 var Version = "0.7.0"

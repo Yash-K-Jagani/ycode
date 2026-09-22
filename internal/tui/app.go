@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -96,6 +97,12 @@ type doneMsg struct {
 	ptok int
 	ctok int
 	usd  float64
+}
+
+type reviewPostDone struct {
+	text string
+	repo string
+	pr   int
 }
 type errMsg struct{ err error }
 type sysMsg string
@@ -330,7 +337,63 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 	}
 }
 
+// reviewPostCmd streams a review constrained to JSON findings for posting.
+func (m *Model) reviewPostCmd(diff, repo string, pr int) tea.Cmd {
+	m.busy = true
+	m.stream.Reset()
+	prog := m.prog
+	prompt := "You are a strict code reviewer. Review the unified diff below. " +
+		"Output ONLY raw JSON, no fences, no prose: " +
+		`{"summary": "2-3 sentence verdict", "comments": [{"path": "file", "line": N, "body": "finding + fix"}]}. ` +
+		"line = NEW-file line number of the finding. Empty comments array when clean.\n\n```diff\n" + diff + "\n```"
+	hist := []apitypes.Message{{Role: apitypes.RoleUser, Content: prompt}}
+	return func() tea.Msg {
+		w := progWriter{send: func(s string) {
+			if prog != nil {
+				prog.Send(deltaMsg(s))
+			}
+		}}
+		full, err := m.router.Stream(context.Background(), hist, w)
+		if err != nil {
+			return errMsg{err}
+		}
+		return reviewPostDone{text: full, repo: repo, pr: pr}
+	}
+}
+
 func selectModelSilent(m *Model, model string) string { return applyModel(m, "ollama", model) }
+
+// postReview parses model JSON findings and posts them as a PR review.
+func (m *Model) postReview(text, repo string, pr int) string {
+	clean := strings.TrimSpace(text)
+	clean = strings.TrimPrefix(clean, "```json")
+	clean = strings.TrimPrefix(clean, "```")
+	clean = strings.TrimSuffix(clean, "```")
+	var findings struct {
+		Summary  string `json:"summary"`
+		Comments []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Body string `json:"body"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(clean)), &findings); err != nil {
+		return "could not parse review JSON: " + err.Error()
+	}
+	comments := make([]map[string]any, 0, len(findings.Comments))
+	for _, c := range findings.Comments {
+		comments = append(comments, map[string]any{"path": c.Path, "line": c.Line, "body": c.Body})
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"action": "review_post", "repo": repo, "number": pr,
+		"review": map[string]any{"summary": findings.Summary, "comments": comments},
+	})
+	out, err := (&tools.GitHubTool{Workdir: m.workdir}).Run(context.Background(), raw)
+	if err != nil {
+		return "post failed: " + err.Error()
+	}
+	return out
+}
 
 func storeList(items []store.Entry) string {
 	if len(items) == 0 {
@@ -685,6 +748,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendSys(out)
 		}
 		webhooks.Fire("turn_error", map[string]any{"error": msg.err.Error()})
+		return m, nil
+	case reviewPostDone:
+		m.busy = false
+		m.stream.Reset()
+		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
+		_ = m.sess.Save()
+		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))
+		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+		m.vp.GotoBottom()
+		m.appendSys(m.postReview(msg.text, msg.repo, msg.pr))
 		return m, nil
 	case mcpLoadedMsg:
 		if msg.err != nil {

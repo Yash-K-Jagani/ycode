@@ -11,13 +11,12 @@
 | `/sessions` | List; `/sessions <id>` resumes (restores its provider/model) |
 | `/status` | Mode, tokens, cost today, cache, RAG, latency |
 | `/connect` | Interactive connect: pick provider, paste key, choose model |
-| `/doctor` | Health: tools, Ollama, RAG, cache, model advice |
+| `/doctor` | Health: tools, Ollama, RAG, cache, model advice (`/doctor fix` repairs) |
 | `/agent [name]` | Pick builder/planner/reviewer |
 | `/init` | Scaffold `.ycode/` + `AGENTS.md` |
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
 | `/plan` `/build` `/chat` `/thinking` | Switch mode (or Tab) |
-| `/review [path]` | AI review of `git diff` |
-| `/test [path] [filter]` | Run project tests, optionally one test by name |
+| `/review [path]` | AI review of `git diff` (`/review --post <pr>` posts inline review comments) || `/test [path] [filter]` | Run project tests, optionally one test by name |
 | `/refactor <goal>` | Checkpoint branch + armed instruction |
 | `/rag [ingest [path]|<query>]` | Local RAG |
 | `/mcps [list|add|remove|tools]` | MCP servers |
@@ -25,6 +24,7 @@
 | `/hooks` | Show configured hooks |
 | `/prompts [list|show|run|save|versions]` | Prompt library |
 | `/plugins [install|reload]` | Script plugins (install accepts git URL, owner/repo, or local dir) |
+| `/store [list|search|install|remove|verify|update]` | Curated skill/plugin store |
 
 Modes: **build** (all tools), **plan** (read-only tools), **chat**/**thinking** (no tools).
 

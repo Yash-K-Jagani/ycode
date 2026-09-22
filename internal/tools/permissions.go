@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -129,6 +130,35 @@ func (p *PermStore) Remember(name string, v Verdict) {
 	case DenyAlways:
 		p.never[name] = true
 		delete(p.always, name)
+	}
+	p.save()
+}
+
+// List returns remembered decisions as "tool: always|never" lines.
+func (p *PermStore) List() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for n := range p.always {
+		out = append(out, n+": always")
+	}
+	for n := range p.never {
+		out = append(out, n+": never")
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Clear forgets one tool (or everything with empty name).
+func (p *PermStore) Clear(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if name == "" {
+		p.always = map[string]bool{}
+		p.never = map[string]bool{}
+	} else {
+		delete(p.always, name)
+		delete(p.never, name)
 	}
 	p.save()
 }

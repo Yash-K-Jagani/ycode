@@ -262,3 +262,15 @@ func TestExecDirect(t *testing.T) {
 		t.Fatalf("disallowed should error: %v", res)
 	}
 }
+
+func TestAllFailHonest(t *testing.T) {
+	reg := newTestRegistry()
+	same := `<tool:echo>{}</tool:echo>`
+	p := &fakeProvider{script: []string{same, same, same, same, same, same, same, same}}
+	res, _ := Run(context.Background(), p, "fake-1",
+		[]apitypes.Message{{Role: apitypes.RoleUser, Content: "hi"}},
+		reg, nil, nil, io.Discard, nil)
+	if !strings.Contains(res.Text, "nothing was done") {
+		t.Fatalf("must admit failure: %q", res.Text)
+	}
+}

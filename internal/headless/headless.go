@@ -56,7 +56,7 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
 	allowed := modes.AllowedTools(o.Mode)
-	sys := modes.SystemPrompt(o.Mode, reg, o.Workdir) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
+	sys := modes.SystemPrompt(o.Mode, reg, o.Workdir, cfg.ActiveModel) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
 		"\nHEADLESS: no interactive user. Do the task, verify with tools, output the final result."
 	if o.Mode == modes.Build || o.Mode == modes.Plan {
 		sys += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +

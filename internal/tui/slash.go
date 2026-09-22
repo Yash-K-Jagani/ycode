@@ -161,7 +161,7 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /permissions\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
 		},
 		"/tools": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			names := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
@@ -181,6 +181,22 @@ func slashRegistry() map[string]slashHandler {
 				fmt.Fprintf(&b, "- %s: %s\n", n, desc)
 			}
 			return b.String(), nil
+		},
+		"/permissions": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			f := strings.Fields(args)
+			if len(f) == 2 && f[0] == "clear" {
+				m.perms.Clear(f[1])
+				return "Forgot remembered verdict for " + f[1] + " (will ask again).", nil
+			}
+			if len(f) == 1 && f[0] == "clear" {
+				m.perms.Clear("")
+				return "Forgot all remembered verdicts (will ask again).", nil
+			}
+			list := m.perms.List()
+			if len(list) == 0 {
+				return "No remembered verdicts. Mutating tools ask each time: y once · a always · s skip · d never.", nil
+			}
+			return "Remembered:\n- " + strings.Join(list, "\n- ") + "\n/permissions clear [tool]", nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if strings.TrimSpace(args) == "fix" {
@@ -828,6 +844,7 @@ func doctorReport(ctx context.Context, m *Model) string {
 	}
 	h, mi, size := m.semCache.Stats()
 	fmt.Fprintf(&b, "cache: %d hits / %d misses (%d items)\n", h, mi, size)
+	fmt.Fprintf(&b, "approvals: %d prompts / %d denied (see /permissions)\n", m.gatePrompts, m.gateDenials)
 	if strings.Contains(m.cfg.ActiveModel, "1.5b") || strings.Contains(m.cfg.ActiveModel, "1b") {
 		b.WriteString("advice: tiny models often mangle tool calls — prefer a 3b+ coder model (/models) for build mode\n")
 	}

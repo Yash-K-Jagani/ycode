@@ -95,6 +95,8 @@ type Model struct {
 	perms           *tools.PermStore
 	approvalCh      chan *tools.ApprovalReq
 	pendingApproval *tools.ApprovalReq
+	gatePrompts     int
+	gateDenials     int
 
 	sideOn         bool
 	sessPTok       int
@@ -117,7 +119,13 @@ type doneMsg struct {
 	ctx   int
 	ctxB  int
 	calls int
+	oks   int
 	agent bool
+}
+
+// noSuccessNote explains a tool-less turn honestly (names failures).
+func noSuccessNote() string {
+	return "no tools completed successfully — rephrase with explicit paths, allow the prompt (y), or try a larger coder model (/models)"
 }
 
 type reviewPostDone struct {
@@ -236,8 +244,15 @@ func (m *Model) answerApproval(v tools.Verdict, note string) {
 	req := m.pendingApproval
 	m.pendingApproval = nil
 	if req != nil {
+		if v == tools.DenyOnce || v == tools.DenyAlways {
+			m.gateDenials++
+		}
 		req.Done <- v
-		m.appendSys(fmt.Sprintf("⛔ %s %s — %s", req.Tool, truncateArgs(req.Args), note))
+		extra := ""
+		if v == tools.DenyAlways {
+			extra = " (change with /permissions clear " + req.Tool + ")"
+		}
+		m.appendSys(fmt.Sprintf("⛔ %s %s — %s%s", req.Tool, truncateArgs(req.Args), note, extra))
 	}
 }
 
@@ -637,6 +652,7 @@ func (m *Model) submit() tea.Cmd {
 		}
 		ctx = tools.WithGate(ctx, &tools.Gate{Store: m.perms, Ask: m.approvalCh})
 		toolCalls := 0
+		toolOK := 0
 		written := 0
 		toolBytes := 0
 		w := progWriter{send: func(s string) {
@@ -647,6 +663,9 @@ func (m *Model) submit() tea.Cmd {
 		}}
 		onTool := func(name, args, result string, err error) {
 			toolCalls++
+			if err == nil {
+				toolOK++
+			}
 			toolBytes += len(result)
 			status := fmt.Sprintf("ok (%d bytes)", len(result))
 			if err != nil {
@@ -666,7 +685,7 @@ func (m *Model) submit() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		sys := modes.SystemPrompt(mode, reg, workdir) + "\nActive agent: " + ag.Name + " — " + ag.Prompt
+		sys := modes.SystemPrompt(mode, reg, workdir, model) + "\nActive agent: " + ag.Name + " — " + ag.Prompt
 		if skill != "" {
 			sys += "\nActive skill instructions:\n" + skill
 		}
@@ -766,7 +785,7 @@ func (m *Model) submit() tea.Cmd {
 				}
 				// Deterministic conversion: bare shell command as the whole
 				// answer (rm/touch) becomes the real tool call — no inference.
-				if toolCalls == 0 {
+				if toolOK == 0 {
 					if conv := shellToCalls(answer, userText); len(conv) > 0 {
 						if prog != nil {
 							prog.Send(sysMsg("↳ ran it as a tool instead…"))
@@ -794,13 +813,13 @@ func (m *Model) submit() tea.Cmd {
 				// for an equally empty answer).
 				retryNudge := ""
 				switch {
-				case toolCalls == 0 && looksLikeWriteTask(userText) && hasCodeFence(answer):
+				case toolOK == 0 && looksLikeWriteTask(userText) && hasCodeFence(answer):
 					retryNudge = "You pasted file content as text instead of using the write/edit tool. Redo this turn properly: emit ONLY a tool call shaped exactly like <tool:write>{\"path\": \"FILE\", \"content\": \"...\"}</tool:write> — no pasted content, no prose."
-				case toolCalls == 0 && fileTaskRe.MatchString(userText) && hasResultRoleplay(answer):
+				case toolOK == 0 && fileTaskRe.MatchString(userText) && hasResultRoleplay(answer):
 					retryNudge = "You wrote a <tool_result> without ever emitting the matching <tool:> call — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s); results come back to you, never write them yourself."
-				case toolCalls == 0 && looksLikeDeleteTask(userText):
+				case toolOK == 0 && looksLikeDeleteTask(userText):
 					retryNudge = "You did not call any tool. Redo this turn properly: emit ONLY a call shaped exactly like <tool:delete>{\"path\": \"FILE\"}</tool:delete> (add \"recursive\": true for directories) — no prose claims."
-				case toolCalls == 0 && fileTaskRe.MatchString(userText) && claimsCompletion(answer):
+				case toolOK == 0 && fileTaskRe.MatchString(userText) && claimsCompletion(answer):
 					retryNudge = "You claimed completion without calling any tool — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s) that do the work, no claims, no prose."
 				}
 				if retryNudge != "" {
@@ -818,8 +837,8 @@ func (m *Model) submit() tea.Cmd {
 						notes = append(notes, "self-corrected to tools")
 					}
 				}
-				if toolCalls == 0 && fileTaskRe.MatchString(userText) {
-					notes = append(notes, "no tools were called — rephrase with explicit paths, or try a larger coder model (/models)")
+				if toolOK == 0 && fileTaskRe.MatchString(userText) {
+					notes = append(notes, noSuccessNote())
 				}
 				done = true
 				break
@@ -836,7 +855,7 @@ func (m *Model) submit() tea.Cmd {
 			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
-		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, agent: len(allowed) > 0}
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, agent: len(allowed) > 0}
 	}
 }
 
@@ -933,7 +952,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.toolCallsTotal += msg.calls
 		if msg.agent {
 			m.toolModeTurns++
-			if msg.calls > 0 {
+			if msg.oks > 0 {
 				m.toolTurns++
 			}
 		}
@@ -996,6 +1015,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case approvalReqMsg:
 		m.pendingApproval = msg.req
+		m.gatePrompts++
 		return m, nil
 	case sysMsg:
 		m.appendSys(string(msg))

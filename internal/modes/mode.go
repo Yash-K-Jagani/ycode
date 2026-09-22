@@ -2,6 +2,7 @@ package modes
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Yash-K-Jagani/ycode/internal/lang"
@@ -41,26 +42,62 @@ func AllowedTools(m Mode, extra ...string) []string {
 	return append(base, extra...)
 }
 
-func SystemPrompt(m Mode, reg *tools.Registry, workdir string) string {
+func SystemPrompt(m Mode, reg *tools.Registry, workdir, model string) string {
 	base := "You are a capable AI coding assistant running inside ycode, a terminal coding harness. Workdir: " + workdir + ". Be concise."
 	if proj, ok := lang.Detect(workdir); ok {
 		base += " Project language: " + proj.Language + "."
 	}
 	base += harness()
+	docs := func(names []string) string {
+		if isSmallModel(model) {
+			return toolDocsCompact(reg, names)
+		}
+		return toolDocs(reg, names)
+	}
 	switch m {
 	case Plan:
 		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan." +
 			"\nIf the request is ambiguous or missing key facts, FIRST ask up to 3 numbered clarifying questions (concise, each with your best-guess default) and stop — do not plan until the user answers." +
 			" If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly." +
 			" Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here." +
-			" Stay on task: don't repeat tool calls that already returned." + toolDocs(reg, AllowedTools(m))
+			" Stay on task: don't repeat tool calls that already returned." + docs(AllowedTools(m))
 	case Build:
-		return base + "\nMODE: BUILD. Use tools to read, write, edit and verify code. After edits, re-read or run tests when sensible." + routing() + toolDocs(reg, AllowedTools(m))
+		rt := routing()
+		if isSmallModel(model) {
+			rt = shortRouting()
+		}
+		return base + "\nMODE: BUILD. Use tools to read, write, edit and verify code. After edits, re-read or run tests when sensible." + rt + docs(AllowedTools(m))
 	case Thinking:
 		return base + "\nMODE: THINKING. Think step by step inside <scratchpad>...</scratchpad> (visible), then give the final answer. No tools in this mode — reason from conversation history."
 	default:
 		return base + "\nMODE: CHAT. Plain conversation, no tools."
 	}
+}
+
+// isSmallModel matches tiny models that drown in long tool schemas.
+var smallModelRe = regexp.MustCompile(`(?i)(1\.5b|0\.5b|\b1b\b|mini|nano|tiny|small)`)
+
+func isSmallModel(model string) bool { return smallModelRe.MatchString(model) }
+
+// toolDocsCompact lists tools as one-liners (names + first sentence only).
+func toolDocsCompact(reg *tools.Registry, names []string) string {
+	if len(names) == 0 || reg == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nTOOLS — act by emitting exactly: <tool:NAME>{\"arg\": \"value\"}</tool:NAME> (raw text, never fenced). Example: <tool:read>{\"path\": \"main.go\"}</tool:read>. Wait for results. Max 8 rounds.\n")
+	for _, n := range names {
+		t, ok := reg.Get(n)
+		if !ok {
+			continue
+		}
+		desc := t.Description()
+		if i := strings.IndexByte(desc, '.'); i >= 0 {
+			desc = desc[:i]
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", t.Name(), desc)
+	}
+	return b.String()
 }
 
 func harness() string {
@@ -73,6 +110,12 @@ func harness() string {
 		"\n- If the user seems stuck with setup, models, or keys, point them at /doctor or /connect instead of guessing. Never invent API keys, DSNs, paths, or URLs — ask or discover them with tools." +
 		"\n- If asked what tools or abilities you have, answer from your tool list below: compact one-line bullets, no schemas, no repetition, then stop." +
 		"\n- Never claim to be ycode itself, its developer, or its UI. If asked who you are, say you are an AI assistant running inside the ycode harness."
+}
+
+// shortRouting is the compact tool guide for small models.
+func shortRouting() string {
+	return "\nTOOLS: find files glob, read files read, search grep, write/edit files to change them, run tests testgen, shell bash, git history git." +
+		"\nRULES: never paste file content (use write/edit), never bare shell commands (use tool calls), never write result blocks, fix bad args and retry.\n"
 }
 func routing() string {
 	return "\nWHEN TO USE EACH TOOL (pick the right one, don't default to git/bash):" +

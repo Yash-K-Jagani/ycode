@@ -179,6 +179,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	cur := append([]apitypes.Message(nil), msgs...)
 	last := ""
 	lastGood := ""
+	hadSuccess := false
 	totalCalls := 0
 	counts := map[string]int{}
 	cached := map[string]string{}
@@ -227,6 +228,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			} else {
 				res, err = execCall(ctx, reg, allow, hk, c)
 				if err == nil {
+					hadSuccess = true
 					cached[key] = res
 					lastGood = "<tool_result:" + c.Name + ">" + res + "</tool_result:" + c.Name + ">"
 				}
@@ -250,7 +252,12 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			if answer == "" {
 				answer = finalText(last)
 			}
-			return Result{Text: answer + "\n\n(stopped: same tool call repeated — answer built from its result)", Rounds: round + 1, Calls: totalCalls}, nil
+			if !hadSuccess {
+				answer += "\n\n(stopped: repeated calls, no tool completed successfully — nothing was done)"
+			} else {
+				answer += "\n\n(stopped: same tool call repeated — answer built from its result)"
+			}
+			return Result{Text: answer, Rounds: round + 1, Calls: totalCalls}, nil
 		}
 	}
 	answer := finalText(lastGood)
@@ -258,6 +265,9 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 		answer = finalText(last) + "\n…(tool round limit reached)"
 	} else {
 		answer += "\n…(tool round limit reached — answered from tool results)"
+	}
+	if !hadSuccess {
+		answer += "\n(no tool completed successfully — nothing was done)"
 	}
 	return Result{Text: answer, Rounds: MaxRounds, Calls: totalCalls}, nil
 }

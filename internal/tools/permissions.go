@@ -53,7 +53,7 @@ func NeedsApproval(name, argsJSON string) bool {
 		return args.Action == "import"
 	case "vscode":
 		return args.Action == "open"
-	case "write", "edit", "bash", "patch", "run", "testgen", "scaffold":
+	case "write", "edit", "delete", "bash", "patch", "run", "testgen", "scaffold":
 		return true
 	default:
 		// MCP + script plugins + unknown: prompt (fail closed).

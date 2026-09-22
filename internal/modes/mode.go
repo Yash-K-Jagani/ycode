@@ -32,7 +32,7 @@ func AllowedTools(m Mode, extra ...string) []string {
 	var base []string
 	switch m {
 	case Build:
-		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "db", "notebook", "api", "vscode", "scaffold", "models"}
+		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "delete", "db", "notebook", "api", "vscode", "scaffold", "models"}
 	case Plan:
 		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models"}
 	default:
@@ -84,6 +84,7 @@ func routing() string {
 		"\n- map directories: tree. multi-step work: track it with todo. remember user facts: memory. apply a unified diff: patch." +
 		"\n- run code and show output: run tool (inline code or a file, 10 languages). run tests: testgen (use run filter for one test)." +
 		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
+		"\n- delete files only with the delete tool (never bash rm); remove dirs need recursive:true." +
 		"\n- When asked to write/create/edit file content: NEVER paste the content as your answer — ALWAYS emit write/edit tool calls that do it. Pasting content instead of acting is a failure." +
 		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
 		"\n- databases (ask for DSN, never invent): db tables/schema/query. notebooks: notebook cells (execute needs jupyter). REST APIs: api (any method, JSON body)." +

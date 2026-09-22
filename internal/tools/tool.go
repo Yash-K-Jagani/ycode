@@ -71,6 +71,7 @@ func DefaultRegistry(workdir string) *Registry {
 	r.Add(&MemoryTool{})
 	r.Add(&PatchTool{Workdir: workdir})
 	r.Add(&RunTool{Workdir: workdir})
+	r.Add(&DeleteTool{Workdir: workdir})
 	r.Add(&ModelsTool{Workdir: workdir})
 	r.Add(&DBTool{})
 	r.Add(&NotebookTool{Workdir: workdir})

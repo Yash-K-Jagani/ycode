@@ -38,6 +38,25 @@ func TestLooksLikeWriteTask(t *testing.T) {
 	}
 }
 
+func TestDeleteAndClaimDetect(t *testing.T) {
+	for _, s := range []string{"delete notes.txt", "remove the file old.log", "erase temp dir"} {
+		if !looksLikeDeleteTask(s) {
+			t.Fatalf("miss: %q", s)
+		}
+	}
+	if looksLikeDeleteTask("list files") {
+		t.Fatal("false positive")
+	}
+	for _, s := range []string{"done, deleted it", "file created successfully"} {
+		if !claimsCompletion(s) {
+			t.Fatalf("miss: %q", s)
+		}
+	}
+	if claimsCompletion("nothing to report") {
+		t.Fatal("false positive")
+	}
+}
+
 func TestIsBuildIt(t *testing.T) {
 	for _, s := range []string{
 		"build it", "Build This", "now build", "go ahead", "proceed",

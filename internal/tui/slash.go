@@ -843,6 +843,16 @@ func hasCodeFence(s string) bool { return strings.Contains(s, "```") }
 
 func looksLikeWriteTask(s string) bool { return writeTaskRe.MatchString(s) }
 
+// deleteTaskRe matches requests to remove files.
+var deleteTaskRe = regexp.MustCompile(`(?i)\b(delete|remove|erase|rm)\b.{0,50}\b(files?|folder|dir|directory)\b|\b(delete|remove)\s+(the\s+)?(file|\S+\.\w+)\b`)
+
+func looksLikeDeleteTask(s string) bool { return deleteTaskRe.MatchString(s) }
+
+// claimRe matches completion claims that, with zero tool calls, signal a dodge.
+var claimRe = regexp.MustCompile(`(?i)\b(done|deleted|created|wrote|finished|completed|removed|updated)\b`)
+
+func claimsCompletion(s string) bool { return claimRe.MatchString(s) }
+
 // buildItRe matches approval/go-ahead messages that should trigger a pending plan.
 var buildItRe = regexp.MustCompile(`(?i)^\s*(build it|build this|now build|go ahead|proceed|do it|implement it|approved?|yes,? build|start building|get (going|started))\b`)
 

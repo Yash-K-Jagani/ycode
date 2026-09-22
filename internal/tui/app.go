@@ -775,6 +775,10 @@ func (m *Model) submit() tea.Cmd {
 					retryNudge = "You pasted file content as text instead of using the write/edit tool. Redo this turn properly: emit ONLY a tool call shaped exactly like <tool:write>{\"path\": \"FILE\", \"content\": \"...\"}</tool:write> — no pasted content, no prose."
 				case toolCalls == 0 && fileTaskRe.MatchString(userText) && hasResultRoleplay(answer):
 					retryNudge = "You wrote a <tool_result> without ever emitting the matching <tool:> call — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s); results come back to you, never write them yourself."
+				case toolCalls == 0 && looksLikeDeleteTask(userText):
+					retryNudge = "You did not call any tool. Redo this turn properly: emit ONLY a call shaped exactly like <tool:delete>{\"path\": \"FILE\"}</tool:delete> (add \"recursive\": true for directories) — no prose claims."
+				case toolCalls == 0 && fileTaskRe.MatchString(userText) && claimsCompletion(answer):
+					retryNudge = "You claimed completion without calling any tool — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s) that do the work, no claims, no prose."
 				}
 				if retryNudge != "" {
 					if prog != nil {

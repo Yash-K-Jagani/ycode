@@ -842,6 +842,12 @@ func hasCodeFence(s string) bool { return strings.Contains(s, "```") }
 
 func looksLikeWriteTask(s string) bool { return writeTaskRe.MatchString(s) }
 
+var resultRoleplayRe = regexp.MustCompile(`(?i)<(write_result|tool_result:[a-z_]+)>`)
+
+// hasResultRoleplay reports a <tool_result>/write_result block the model
+// wrote itself without ever emitting the matching <tool:> call.
+func hasResultRoleplay(s string) bool { return resultRoleplayRe.MatchString(s) }
+
 func ragLoad(m *Model) (rag.Index, bool) {
 	if m.ragIdx != nil && len(m.ragIdx.Chunks) > 0 {
 		return *m.ragIdx, true

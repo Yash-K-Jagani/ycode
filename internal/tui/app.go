@@ -723,15 +723,23 @@ func (m *Model) submit() tea.Cmd {
 				if i > 0 {
 					notes = append(notes, "fell back to "+cand.label)
 				}
-				// Self-correction: pasted file content instead of acting.
+				// Self-correction: the model dodged acting (pasted content or
+				// roleplayed a result tag instead of emitting the call).
 				// One bounded retry round, then whatever comes back stands.
-				if toolCalls == 0 && looksLikeWriteTask(userText) && hasCodeFence(answer) {
+				retryNudge := ""
+				switch {
+				case toolCalls == 0 && looksLikeWriteTask(userText) && hasCodeFence(answer):
+					retryNudge = "You pasted file content as text instead of using the write/edit tool. Redo this turn properly: emit ONLY tool call(s) that perform the write, no pasted content."
+				case toolCalls == 0 && fileTaskRe.MatchString(userText) && hasResultRoleplay(answer):
+					retryNudge = "You wrote a <tool_result> without ever emitting the matching <tool:> call — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s); results come back to you, never write them yourself."
+				}
+				if retryNudge != "" {
 					if prog != nil {
-						prog.Send(sysMsg("↳ pasted content instead of writing — retrying with tools…"))
+						prog.Send(sysMsg("↳ dodged acting — retrying with tools…"))
 					}
 					retryMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
-						apitypes.Message{Role: apitypes.RoleSystem, Content: "You pasted file content as text instead of using the write/edit tool. Redo this turn properly: emit ONLY tool call(s) that perform the write, no pasted content."})
+						apitypes.Message{Role: apitypes.RoleSystem, Content: retryNudge})
 					res2, err2 := agent.Run(ctx, cand.p, cand.model, retryMsgs, reg, allowed, hookset, w, onTool)
 					turnCalls += res2.Calls
 					if err2 == nil || res2.Text != "" {

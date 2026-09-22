@@ -25,4 +25,15 @@ func TestLooksLikeWriteTask(t *testing.T) {
 	if !hasCodeFence("hi\n```go\nx\n```") || hasCodeFence("plain") {
 		t.Fatal("fence detect wrong")
 	}
+	for _, s := range []string{
+		`<write_result>E:\x\index.html</write_result>`,
+		`done <tool_result:read>{"a":1}</tool_result:read>`,
+	} {
+		if !hasResultRoleplay(s) {
+			t.Fatalf("miss: %q", s)
+		}
+	}
+	if hasResultRoleplay("just prose") || hasResultRoleplay(`<tool:read>{"a":1}</tool:read>`) {
+		t.Fatal("call tags must not count as roleplay")
+	}
 }

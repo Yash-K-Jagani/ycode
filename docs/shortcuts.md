@@ -6,6 +6,7 @@
 | `Ctrl+D` | Exit |
 | `Ctrl+L` | (reserved) |
 | `Ctrl+N` | New session |
+| `Ctrl+B` | Toggle right sidebar (folder, model, tokens, spend, tasks) |
 | `Ctrl+O` | Cycle installed Ollama models |
 | `Ctrl+P` | (palette = `/` commands) |
 | `Ctrl+R` | (sessions via `/sessions`) |

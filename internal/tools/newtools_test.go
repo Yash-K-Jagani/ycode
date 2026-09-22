@@ -128,3 +128,25 @@ func TestPatch(t *testing.T) {
 		t.Fatal("expected read-only block")
 	}
 }
+
+func TestReadTodos(t *testing.T) {
+	dir := t.TempDir()
+	if got := ReadTodos(dir); len(got) != 0 {
+		t.Fatalf("expected empty, got %v", got)
+	}
+	tl := &TodoTool{Workdir: dir}
+	ctx := context.Background()
+	if _, err := tl.Run(ctx, json.RawMessage(`{"action":"add","text":"step one"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Run(ctx, json.RawMessage(`{"action":"add","text":"step two"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tl.Run(ctx, json.RawMessage(`{"action":"done","id":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := ReadTodos(dir)
+	if len(got) != 2 || !got[0].Done || got[1].Done || got[1].Text != "step two" {
+		t.Fatalf("%+v", got)
+	}
+}

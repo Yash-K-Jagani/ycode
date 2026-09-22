@@ -101,6 +101,7 @@ No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick
 ## 4. The TUI
 
 - **Chat pane** (markdown, code blocks on tinted panels, command chips), **input box** with a mode chip (`▸ build · builder`), keystroke command palette, status bar.
+- **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, session + daily spend, live task list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
 - `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.

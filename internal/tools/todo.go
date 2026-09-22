@@ -18,6 +18,23 @@ type todoItem struct {
 	Created string `json:"created"`
 }
 
+// TodoItem is the exported view of a todo for UI layers.
+type TodoItem struct {
+	ID   int
+	Text string
+	Done bool
+}
+
+// ReadTodos returns the workdir task list (empty when none).
+func ReadTodos(workdir string) []TodoItem {
+	t := &TodoTool{Workdir: workdir}
+	var out []TodoItem
+	for _, it := range t.load() {
+		out = append(out, TodoItem{ID: it.ID, Text: it.Text, Done: it.Done})
+	}
+	return out
+}
+
 type TodoTool struct{ Workdir string }
 
 func (TodoTool) Name() string { return "todo" }

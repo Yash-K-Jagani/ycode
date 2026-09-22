@@ -82,12 +82,20 @@ type Model struct {
 
 	conn       *connectFlow
 	winW, winH int
+
+	sideOn   bool
+	sessPTok int
+	sessCTok int
+	sessUSD  float64
 }
 
 type deltaMsg string
 type doneMsg struct {
 	text string
 	note string
+	ptok int
+	ctok int
+	usd  float64
 }
 type errMsg struct{ err error }
 type sysMsg string
@@ -132,6 +140,7 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 		skillMgr: skills.NewManager(),
 		embedder: em, semCache: cache.New(em.Embed),
 		pluginLoader: plugins.NewLoader(),
+		sideOn:       true,
 	}
 	m.registerPluginTools()
 	return m
@@ -293,7 +302,10 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		return doneMsg{text: "## Code review\n\n" + full}
+		pt := yctx.Estimate(hist)
+		ct := len(full) / 4
+		usd := m.tracker.Add(m.cfg.ActiveProvider, pt, ct)
+		return doneMsg{text: "## Code review\n\n" + full, ptok: pt, ctok: ct, usd: usd}
 	}
 }
 
@@ -561,14 +573,14 @@ func (m *Model) submit() tea.Cmd {
 			}
 		}
 		complTok := written/4 + toolBytes/4
-		_ = tracker.Add(m.cfg.ActiveProvider, promptTok, complTok)
+		turnUSD := tracker.Add(m.cfg.ActiveProvider, promptTok, complTok)
 		_, _, usd := tracker.Today()
 		notes = append(notes, fmt.Sprintf("$%.4f today", usd))
 		if ragNote != "" {
 			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
-		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · ")}
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD}
 	}
 }
 
@@ -597,10 +609,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.winW, m.winH = msg.Width, msg.Height
 		m.vp.Width = msg.Width
+		if m.sideOn && msg.Width > sideWidth+40 {
+			m.vp.Width = msg.Width - sideWidth - 3
+		}
 		m.vp.Height = msg.Height - 7
 		m.ta.SetWidth(msg.Width - 4)
-		m.winW, m.winH = msg.Width, msg.Height
 		if m.startup == "" {
 			m.startup = theme.Splash(m.th.Accent)
 			m.vp.SetContent(m.startup + "\n\n" + strings.Join(m.msgs, "\n\n"))
@@ -632,6 +647,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream.Reset()
 		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 		m.vp.GotoBottom()
+		m.sessPTok += msg.ptok
+		m.sessCTok += msg.ctok
+		m.sessUSD += msg.usd
 		if msg.note != "" {
 			m.appendSys(msg.note)
 		}
@@ -784,6 +802,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+o":
 			return m, m.cycleModelCmd()
+		case "ctrl+b":
+			m.sideOn = !m.sideOn
+			m.vp.Width = m.winW
+			if m.sideOn && m.winW > sideWidth+40 {
+				m.vp.Width = m.winW - sideWidth - 3
+			}
+			return m, nil
 		case "tab":
 			m.cycleMode(1)
 			return m, nil
@@ -824,7 +849,11 @@ func (m Model) View() string {
 	chip := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent).Render("▸ "+string(m.mode)) +
 		lipgloss.NewStyle().Foreground(m.th.Dim).Render(" · "+m.agent.Name+" · tab: switch mode")
 	input := chip + "\n" + m.ta.View()
-	out := m.vp.View() + "\n"
+	chat := m.vp.View()
+	if m.sideOn && m.winW > sideWidth+40 {
+		chat = lipgloss.JoinHorizontal(lipgloss.Top, chat, m.sidebar(m.vp.Height))
+	}
+	out := chat + "\n"
 	if pal := m.paletteItems(); len(pal) > 0 {
 		out += renderPalette(pal, m.palIdx, m.vp.Width, m.th.Accent) + "\n"
 	} else if at, _ := m.atItems(); len(at) > 0 {

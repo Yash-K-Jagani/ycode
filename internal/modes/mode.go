@@ -68,6 +68,7 @@ func routing() string {
 		"\n- map directories: tree. multi-step work: track it with todo. remember user facts: memory. apply a unified diff: patch." +
 		"\n- run code and show output: run tool (inline code or a file, 10 languages). run tests: testgen (use run filter for one test)." +
 		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
+		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
 		"\n- in PLAN mode bash/write/edit are disabled: use the git tool (log/diff/show/status all work) and read/grep/glob." +
 		"\n- run shell commands only via bash (project dir, destructive cmds are blocked)." +
 		"\n- stay on task: call only the tools needed for THIS request. Don't explore the repo for fun." +

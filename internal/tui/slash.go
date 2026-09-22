@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -159,7 +160,7 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab).", nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if strings.TrimSpace(args) == "fix" {
@@ -176,6 +177,15 @@ func slashRegistry() map[string]slashHandler {
 			return "New session started.", nil
 		},
 		"/sessions": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			if f := strings.Fields(args); len(f) == 2 && f[0] == "fork" {
+				fork, err := sessions.Fork(f[1])
+				if err != nil {
+					return "fork failed: " + err.Error(), nil
+				}
+				m.sess = fork
+				m.renderAll()
+				return "Forked as " + fork.Title + " (" + fork.ID + ") — original untouched.", nil
+			}
 			if args != "" {
 				s, err := sessions.Load(strings.TrimSpace(args))
 				if err != nil {
@@ -204,8 +214,22 @@ func slashRegistry() map[string]slashHandler {
 				}
 				fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
 			}
-			b.WriteString("Use: /sessions <id> to resume")
+			b.WriteString("Use: /sessions <id> to resume, /sessions fork <id> to branch")
 			return b.String(), nil
+		},
+		"/export": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			md := sessions.Export(m.sess)
+			target := strings.TrimSpace(args)
+			if target == "" {
+				target = "session-" + m.sess.ID + ".md"
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(m.workdir, target)
+			}
+			if err := os.WriteFile(target, []byte(md), 0o644); err != nil {
+				return "export failed: " + err.Error(), nil
+			}
+			return fmt.Sprintf("Exported %d messages to %s", len(m.sess.Messages), target), nil
 		},
 		"/models": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			f := strings.Fields(args)
@@ -460,16 +484,39 @@ func slashRegistry() map[string]slashHandler {
 		},
 		"/test": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			f := strings.Fields(args)
+			for _, tok := range f {
+				if tok == "stop" {
+					was := m.watching()
+					m.stopWatch()
+					if was {
+						return "Test watch stopped.", nil
+					}
+					return "No watch running. Usage: /test [--watch] [path] [filter] | /test stop", nil
+				}
+			}
+			watch := false
+			var rest []string
+			for _, tok := range f {
+				if tok == "--watch" {
+					watch = true
+					continue
+				}
+				rest = append(rest, tok)
+			}
 			target := m.workdir
 			payload := map[string]string{}
-			if len(f) > 0 {
-				target = f[0]
+			if len(rest) > 0 {
+				target = rest[0]
 				payload["path"] = target
 			} else {
 				payload["path"] = target
 			}
-			if len(f) > 1 {
-				payload["run"] = strings.Join(f[1:], " ")
+			if len(rest) > 1 {
+				payload["run"] = strings.Join(rest[1:], " ")
+			}
+			if watch {
+				m.startWatch(target)
+				return "Watching " + target + " — tests re-run on save (/test stop to end).", nil
 			}
 			raw, _ := json.Marshal(payload)
 			out, err := (&tools.TestGenTool{Workdir: m.workdir}).Run(ctx, raw)

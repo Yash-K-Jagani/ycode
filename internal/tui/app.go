@@ -84,10 +84,15 @@ type Model struct {
 	conn       *connectFlow
 	winW, winH int
 
+	watchCancel context.CancelFunc
+	watchTarget string
+
 	sideOn   bool
 	sessPTok int
 	sessCTok int
 	sessUSD  float64
+	lastCtx  int
+	lastCtxB int
 }
 
 type deltaMsg string
@@ -97,6 +102,8 @@ type doneMsg struct {
 	ptok int
 	ctok int
 	usd  float64
+	ctx  int
+	ctxB int
 }
 
 type reviewPostDone struct {
@@ -333,7 +340,7 @@ func (m *Model) reviewCmd(diff string) tea.Cmd {
 		pt := yctx.Estimate(hist)
 		ct := len(full) / 4
 		usd := m.tracker.Add(m.cfg.ActiveProvider, pt, ct)
-		return doneMsg{text: "## Code review\n\n" + full, ptok: pt, ctok: ct, usd: usd}
+		return doneMsg{text: "## Code review\n\n" + full, ptok: pt, ctok: ct, usd: usd, ctx: pt, ctxB: yctx.BudgetFor("")}
 	}
 }
 
@@ -603,7 +610,8 @@ func (m *Model) submit() tea.Cmd {
 				prog.Send(sysMsg("Tip: I have no file tools in chat mode — hit Tab or /build so I can read/edit files."))
 			}
 			if hit, ok := m.semCache.Lookup(ctx, userText, m.cfg.ActiveProvider, model); ok {
-				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)"}
+				est := yctx.Estimate([]apitypes.Message{{Role: apitypes.RoleUser, Content: userText}})
+				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)", ctx: est, ctxB: yctx.BudgetFor(model)}
 			}
 			full, fbNote, err := m.router.StreamWithFallback(ctx, msgs, w)
 			if err != nil {
@@ -664,7 +672,7 @@ func (m *Model) submit() tea.Cmd {
 			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
-		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD}
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget}
 	}
 }
 
@@ -734,6 +742,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessPTok += msg.ptok
 		m.sessCTok += msg.ctok
 		m.sessUSD += msg.usd
+		if msg.ctxB > 0 {
+			m.lastCtx, m.lastCtxB = msg.ctx, msg.ctxB
+		}
 		if msg.note != "" {
 			m.appendSys(msg.note)
 		}
@@ -877,6 +888,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+d":
 			_ = m.sess.Save()
 			m.pluginLoader.Close()
+			m.stopWatch()
 			return m, tea.Quit
 		case "ctrl+c", "esc":
 			if m.busy {
@@ -886,6 +898,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			_ = m.sess.Save()
 			m.pluginLoader.Close()
+			m.stopWatch()
 			return m, tea.Quit
 		case "ctrl+n":
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
@@ -942,6 +955,9 @@ func (m Model) View() string {
 	}
 	chip := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent).Render("▸ "+string(m.mode)) +
 		lipgloss.NewStyle().Foreground(m.th.Dim).Render(" · "+m.agent.Name+" · tab: switch mode")
+	if m.watching() {
+		chip += lipgloss.NewStyle().Foreground(lipgloss.Color("#2de1a7")).Render(" · ● watching " + m.watchTarget)
+	}
 	input := chip + "\n" + m.ta.View()
 	chat := m.vp.View()
 	if m.sideOn && m.winW > sideWidth+40 {

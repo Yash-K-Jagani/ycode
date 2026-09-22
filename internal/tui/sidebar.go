@@ -19,6 +19,23 @@ func shortTokens(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
+// ctxBar renders a 10-cell usage bar like ▓▓▓▓▓▓░░░░ 62% (3.7k/6k).
+func ctxBar(used, budget int) string {
+	if budget <= 0 {
+		return "—"
+	}
+	pct := used * 100 / budget
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := pct * 10 / 100
+	return strings.Repeat("▓", filled) + strings.Repeat("░", 10-filled) +
+		fmt.Sprintf(" %d%% (%s/%s)", pct, shortTokens(used), shortTokens(budget))
+}
+
 func (m *Model) sidebar(height int) string {
 	head := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent)
 	dim := lipgloss.NewStyle().Foreground(m.th.Dim)
@@ -37,6 +54,8 @@ func (m *Model) sidebar(height int) string {
 	b.WriteString(val.Render(truncSide(m.cfg.ActiveProvider+"/"+m.cfg.ActiveModel)) + "\n")
 	sec("tokens")
 	fmt.Fprintf(&b, "%s\n", val.Render(shortTokens(m.sessPTok)+" in · "+shortTokens(m.sessCTok)+" out"))
+	sec("context")
+	b.WriteString(val.Render(ctxBar(m.lastCtx, m.lastCtxB)) + "\n")
 	sec("spent")
 	_, _, today := m.tracker.Today()
 	fmt.Fprintf(&b, "%s\n", val.Render(fmt.Sprintf("$%.4f sess · $%.4f today", m.sessUSD, today)))

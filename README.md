@@ -12,7 +12,7 @@ and refactor code through a real agent tool loop.
 - **Hackable** — skills, script plugins, MCP servers, YAML hooks, automations,
   a local HTTP API + Go SDK, and headless/CI modes.
 
-> Status: v0.8.0. Milestones M1–M6 implemented (see `plan.md`).
+> Status: v0.9.0. Milestones M1–M6 implemented (see `plan.md`).
 
 ---
 
@@ -78,7 +78,7 @@ go build -o ycode ./cmd/ycode     # ./ycode.exe on Windows
 go install ./cmd/ycode            # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.8.0`.
+Verify: `ycode version` → `ycode 0.9.0`.
 
 ---
 
@@ -101,7 +101,8 @@ No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick
 ## 4. The TUI
 
 - **Chat pane** (markdown, code blocks on tinted panels, command chips), **input box** with a mode chip (`▸ build · builder`), keystroke command palette, status bar.
-- **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, session + daily spend, live task list. Big tasks are auto-broken into `todo` steps shown here as they complete.
+- **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, context meter, session + daily spend, live task
+list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
 - `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.
@@ -131,7 +132,8 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/models` | Numbered model list; `/models <n>`, `/models <provider> <model>`, fuzzy names, `/models install <ollama-model>` (`ollama pull`) |
 | `/model` | Alias of `/models` |
 | `/variants` | Installed Ollama variants + VRAM/quant guidance |
-| `/sessions` | List; `/sessions <id>` resumes incl. its provider/model |
+| `/sessions` | List; `/sessions <id>` resumes incl. its provider/model; `/sessions fork <id>` branches |
+| `/export [file]` | Save transcript as markdown |
 | `/status` | Mode, tokens, cost today, cache hits, RAG index, latency |
 | `/connect` | Interactive window: provider → API key/host → model picker |
 | `/doctor` | Health check: tools, Ollama, RAG, cache, model advice |
@@ -140,7 +142,7 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
 | `/plan` `/build` `/chat` `/thinking` | Switch mode |
 | `/review [path]` | AI review of `git diff` (summary → file:line findings → fixes) |
-| `/test [path] [filter]` | Run project tests (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python) |
+| `/test [path] [filter]` | Run project tests (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python); `--watch` re-runs on save |
 | `/refactor <goal>` | Checkpoint branch + armed instruction with revert directions |
 | `/rag [ingest [path]│<query>]` | Local RAG index / search |
 | `/mcps [list│add│remove│tools]` | MCP servers (`mcp__<server>__<tool>` tools in build) |
@@ -316,7 +318,7 @@ Conventions: small focused packages, table-less unit tests per package,
 ## 17. Releases & CI
 
 - `.goreleaser.yaml`: `ycode_<os>_<arch>.tar.gz` for linux/windows/darwin ×
-  amd64/arm64. Tag to release: `git tag v0.8.0 && git push origin v0.8.0`.
+  amd64/arm64. Tag to release: `git tag v0.9.0 && git push origin v0.9.0`.
 - `.github/workflows/ci.yml`: build matrix (Go × OS) + `go vet`/`go test` +
   golangci-lint + `ycode ci` review on PRs.
 

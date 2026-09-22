@@ -15,6 +15,7 @@ func slashList() []slashItem {
 	return []slashItem{
 		{"/help", "commands & shortcuts"},
 		{"/exit", "quit (state saved)"},
+		{"/export", "export transcript"},
 		{"/new", "fresh session"},
 		{"/models", "switch model"},
 		{"/model", "alias of /models"},

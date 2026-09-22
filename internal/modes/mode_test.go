@@ -15,10 +15,13 @@ func TestHarnessAwareness(t *testing.T) {
 	reg.Add(&tools.GlobTool{})
 	for _, m := range []Mode{Chat, Plan, Build, Thinking} {
 		p := SystemPrompt(m, reg, dir)
-		for _, want := range []string{"HARNESS", "ycode", "<tool_result>", "/doctor", "/models", "never invent"} {
+		for _, want := range []string{"ENVIRONMENT", "ycode", "<tool_result>", "/doctor", "/models", "never invent", "not the harness"} {
 			if !strings.Contains(strings.ToLower(p), strings.ToLower(want)) {
 				t.Fatalf("mode %s missing %q", m, want)
 			}
+		}
+		if strings.Contains(p, "You are ycode,") {
+			t.Fatalf("mode %s must not identify as ycode itself", m)
 		}
 	}
 	build := SystemPrompt(Build, reg, dir)

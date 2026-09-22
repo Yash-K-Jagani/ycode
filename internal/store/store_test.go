@@ -125,3 +125,71 @@ func TestUpdateCaches(t *testing.T) {
 		t.Fatal("cache mismatch")
 	}
 }
+
+func TestDirHashAndVerify(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644)
+	h1, err := dirHash(dir)
+	if err != nil || h1 == "" {
+		t.Fatal(err)
+	}
+	h2, err := dirHash(dir)
+	if err != nil || h1 != h2 {
+		t.Fatal("hash unstable")
+	}
+	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("bye"), 0o644)
+	h3, _ := dirHash(dir)
+	if h3 == h1 {
+		t.Fatal("change undetected")
+	}
+
+	home := t.TempDir()
+	sk := skills.NewManagerAt(filepath.Join(home, "skills"))
+	pl := plugins.NewLoaderAt(filepath.Join(home, "plugins"))
+	defer pl.Close()
+	remote := t.TempDir()
+	pkg := filepath.Join(remote, "pkg")
+	_ = os.MkdirAll(pkg, 0o755)
+	_ = os.WriteFile(filepath.Join(pkg, "SKILL.md"), []byte("# s\nDescription: d\n\nB.\n"), 0o644)
+	e := Entry{Name: "s", Kind: "skill", Source: remote, Subdir: "pkg", SHA256: mustHash(t, pkg)}
+	if _, err := Install(e, sk, pl); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := Verify("s", sk, pl)
+	if err != nil || !strings.HasPrefix(msg, "ok") {
+		t.Fatalf("verify: %q %v", msg, err)
+	}
+	// tamper → changed (append keeps the # header so the name still resolves)
+	installed, _, _ := sk.Get("s")
+	_ = os.WriteFile(filepath.Join(installed.Path, "SKILL.md"), []byte("# s\nDescription: d\n\nB.\nTAMPERED.\n"), 0o644)
+	if _, err := Verify("s", sk, pl); err == nil {
+		t.Fatal("expected CHANGED")
+	}
+	// wrong checksum on install → error + cleaned up
+	bad := Entry{Name: "s2", Kind: "skill", Source: remote, Subdir: "pkg", SHA256: "deadbeef"}
+	if _, err := Install(bad, sk, pl); err == nil {
+		t.Fatal("expected checksum mismatch")
+	}
+	if _, _, err := sk.Get("s2"); err == nil {
+		t.Fatal("mismatched install should be removed")
+	}
+	// remove
+	if _, err := Remove("s", sk, pl); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove("s", sk, pl); err == nil {
+		t.Fatal("expected not-installed")
+	}
+	if got := VerifyAll(sk, pl); len(got) == 0 {
+		t.Fatal("verify-all empty")
+	}
+}
+
+func mustHash(t *testing.T, dir string) string {
+	t.Helper()
+	h, err := dirHash(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
+}

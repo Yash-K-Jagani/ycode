@@ -23,7 +23,8 @@ func fakeEmbed(ctx context.Context, inputs []string) ([][]float64, error) {
 	return vecs, nil
 }
 
-func TestExactAndSemantic(t *testing.T) {	c := NewAt(filepath.Join(t.TempDir(), "cache.json"), fakeEmbed)
+func TestExactAndSemantic(t *testing.T) {
+	c := NewAt(filepath.Join(t.TempDir(), "cache.json"), fakeEmbed)
 	c.items = nil
 	ctx := context.Background()
 	c.Store(ctx, "aaa bbb", "answer-1", "ollama", "m")

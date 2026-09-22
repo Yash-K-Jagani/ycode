@@ -7,10 +7,12 @@ items:
     source: https://github.com/Yash-K-Jagani/ycode.git
     subdir: store/examples/reviewer
     ref: main
+    sha256: 75d98b97a4eb3aa2f1c4ad686bcf14e9d9cdeead47142a9cf925486cb3c1381e
     description: Strict code reviewer skill (summaries, file:line findings, LGTM/Needs work).
   - name: hello
     kind: plugin
     source: https://github.com/Yash-K-Jagani/ycode.git
     subdir: store/examples/hello
     ref: main
+    sha256: 4c697eef8685522c190adacb40f72f1b2fbf0d46b753a69040cdbf815be693a6
     description: Hello-world script plugin proving store install end to end.

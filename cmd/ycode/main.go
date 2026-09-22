@@ -435,6 +435,36 @@ func storeCmd() *cobra.Command {
 				fmt.Println("installed", e.Kind+":", name)
 			},
 		},
+		&cobra.Command{
+			Use: "remove <name>", Short: "Uninstall a skill or plugin",
+			Args: cobra.ExactArgs(1),
+			Run: func(cmd *cobra.Command, args []string) {
+				what, err := store.Remove(args[0], skills.NewManager(), plugins.NewLoader())
+				if err != nil {
+					fmt.Println("remove:", err)
+					os.Exit(1)
+				}
+				fmt.Println("removed", what)
+			},
+		},
+		&cobra.Command{
+			Use: "verify [name]", Short: "Verify installed packages against records",
+			Run: func(cmd *cobra.Command, args []string) {
+				sk, pl := skills.NewManager(), plugins.NewLoader()
+				if len(args) > 0 {
+					msg, err := store.Verify(args[0], sk, pl)
+					if err != nil {
+						fmt.Println(args[0]+":", err)
+						os.Exit(1)
+					}
+					fmt.Println(args[0] + ": " + msg)
+					return
+				}
+				for _, line := range store.VerifyAll(sk, pl) {
+					fmt.Println(line)
+				}
+			},
+		},
 	)
 	return c
 }

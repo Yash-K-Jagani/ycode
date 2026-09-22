@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/plugins"
 	"github.com/Yash-K-Jagani/ycode/internal/skills"
 	"gopkg.in/yaml.v3"
 )
@@ -25,6 +26,7 @@ type Entry struct {
 	Source      string `yaml:"source"`
 	Subdir      string `yaml:"subdir,omitempty"`
 	Ref         string `yaml:"ref,omitempty"`
+	SHA256      string `yaml:"sha256,omitempty"`
 	Description string `yaml:"description,omitempty"`
 }
 
@@ -111,17 +113,10 @@ func (idx Index) Search(q string) []Entry {
 	return out
 }
 
-type SkillInstaller interface {
-	Install(source string) (skills.Skill, error)
-}
-
-type PluginInstaller interface {
-	Install(source string) (string, error)
-}
-
-// Install fetches the entry (clone URL or local dir, honoring subdir/ref)
-// and installs it through the skill/plugin managers.
-func Install(e Entry, sk SkillInstaller, pl PluginInstaller) (string, error) {
+// Install fetches the entry (clone URL or local dir, honoring subdir/ref),
+// installs it, verifies the checksum when the entry pins one, and records
+// provenance for `verify`.
+func Install(e Entry, sk *skills.Manager, pl *plugins.Loader) (string, error) {
 	if e.Name == "" || e.Source == "" {
 		return "", fmt.Errorf("bad store entry (name/source required)")
 	}
@@ -140,6 +135,7 @@ func Install(e Entry, sk SkillInstaller, pl PluginInstaller) (string, error) {
 		}
 		src = filepath.Join(src, filepath.FromSlash(e.Subdir))
 	}
+	var installedName, installedDir string
 	switch strings.ToLower(e.Kind) {
 	case "skill":
 		if sk == nil {
@@ -149,15 +145,40 @@ func Install(e Entry, sk SkillInstaller, pl PluginInstaller) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return s.Name, nil
+		installedName, installedDir = s.Name, s.Path
 	case "plugin":
 		if pl == nil {
 			return "", fmt.Errorf("no plugin loader")
 		}
-		return pl.Install(src)
+		name, err := pl.Install(src)
+		if err != nil {
+			return "", err
+		}
+		installedName = name
+		installedDir = pl.Dirs()[name]
+		if installedDir == "" {
+			return "", fmt.Errorf("installed but not found: %q", name)
+		}
 	default:
 		return "", fmt.Errorf("unknown kind %q (skill|plugin)", e.Kind)
 	}
+	sum, err := dirHash(installedDir)
+	if err != nil {
+		return "", err
+	}
+	if e.SHA256 != "" && !strings.EqualFold(e.SHA256, sum) {
+		_ = os.RemoveAll(installedDir)
+		return "", fmt.Errorf("checksum mismatch for %q (want %s, got %s) — removed", e.Name, shortSum(e.SHA256), shortSum(sum))
+	}
+	_ = writeRecord(installedDir, e, sum)
+	return installedName, nil
+}
+
+func shortSum(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 func isRemote(s string) bool {

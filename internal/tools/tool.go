@@ -33,6 +33,20 @@ func (r *Registry) Add(t Tool) {
 
 func (r *Registry) Get(name string) (Tool, bool) { t, ok := r.tools[name]; return t, ok }
 
+func (r *Registry) Remove(name string) {
+	if _, ok := r.tools[name]; !ok {
+		return
+	}
+	delete(r.tools, name)
+	kept := r.order[:0]
+	for _, n := range r.order {
+		if n != name {
+			kept = append(kept, n)
+		}
+	}
+	r.order = kept
+}
+
 func (r *Registry) Names() []string {
 	out := append([]string(nil), r.order...)
 	sort.Strings(out)

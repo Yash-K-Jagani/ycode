@@ -8,9 +8,11 @@ ycode store update          # fetch curated index (~/.ycode/store.yaml)
 ycode store list            # all entries
 ycode store search review   # filter
 ycode store install reviewer
+ycode store verify          # check installed packages vs records
+ycode store remove hello
 ```
 
-Same in the TUI: `/store list|search|install|update`.
+Same in the TUI: `/store list|search|install|remove|verify|update`.
 
 Index entries:
 
@@ -27,6 +29,9 @@ Index entries:
   when set) or local dirs; `..` subdirs rejected.
 - Install reuses the normal managers, so skills land in `~/.ycode/skills/`
   and plugins in `~/.ycode/plugins/` (plugin tools auto-register).
+- Integrity: index entries may pin `sha256:` (tree hash); mismatches abort
+  the install and clean up. Every install writes `.store.json` provenance;
+  `verify` recomputes hashes (`ok`, `CHANGED`, or `no record`).
 - Trust: entries are installed on your explicit request only; sources are
-  shown before fetching. Checksums/signatures are a future step — review
+  shown before fetching. Signatures are a future step — review
   a source before installing it.

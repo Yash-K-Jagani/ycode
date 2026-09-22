@@ -148,11 +148,32 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 
 func (m *Model) registerPluginTools() {
 	m.pluginLoader.Reload()
-	m.pluginNames = nil
+	live := map[string]bool{}
 	for _, t := range m.pluginLoader.Tools() {
 		m.toolreg.Add(t)
-		m.pluginNames = append(m.pluginNames, t.Name())
+		live[t.Name()] = true
 	}
+	var kept []string
+	for _, n := range m.pluginNames {
+		if live[n] {
+			kept = append(kept, n)
+		} else {
+			m.toolreg.Remove(n)
+		}
+	}
+	for n := range live {
+		found := false
+		for _, k := range kept {
+			if k == n {
+				found = true
+				break
+			}
+		}
+		if !found {
+			kept = append(kept, n)
+		}
+	}
+	m.pluginNames = kept
 }
 
 func (m *Model) SetProgram(p *tea.Program) { m.prog = p }

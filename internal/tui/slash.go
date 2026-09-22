@@ -595,8 +595,27 @@ func slashRegistry() map[string]slashHandler {
 				}
 				m.appendSys(fmt.Sprintf("Installing %s (%s) from %s …", e.Name, e.Kind, displaySource(e)))
 				return "", m.storeInstallCmd(e)
+			case "remove":
+				if len(f) < 2 {
+					return "Usage: /store remove <name>", nil
+				}
+				what, err := store.Remove(f[1], m.skillMgr, m.pluginLoader)
+				if err != nil {
+					return "store remove: " + err.Error(), nil
+				}
+				m.registerPluginTools()
+				return "Removed " + what, nil
+			case "verify":
+				if len(f) > 1 {
+					msg, err := store.Verify(f[1], m.skillMgr, m.pluginLoader)
+					if err != nil {
+						return f[1] + ": " + err.Error(), nil
+					}
+					return f[1] + ": " + msg, nil
+				}
+				return strings.Join(store.VerifyAll(m.skillMgr, m.pluginLoader), "\n"), nil
 			default:
-				return "Usage: /store [list|search|install|update]", nil
+				return "Usage: /store [list|search|install|remove|verify|update]", nil
 			}
 		},
 		"/variants": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {

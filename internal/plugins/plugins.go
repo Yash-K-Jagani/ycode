@@ -149,6 +149,38 @@ func (l *Loader) Names() []string {
 	return out
 }
 
+// Uninstall removes an installed plugin by manifest name and rescans.
+func (l *Loader) Uninstall(name string) error {
+	l.mu.Lock()
+	dir := ""
+	for _, p := range l.plugins {
+		if strings.EqualFold(p.Manifest.Name, name) {
+			dir = p.Dir
+			break
+		}
+	}
+	l.mu.Unlock()
+	if dir == "" {
+		return fmt.Errorf("plugin %q not installed", name)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	l.Reload()
+	return nil
+}
+
+// Dirs maps installed plugin names to their directories.
+func (l *Loader) Dirs() map[string]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]string{}
+	for _, p := range l.plugins {
+		out[p.Manifest.Name] = p.Dir
+	}
+	return out
+}
+
 // Describe lists plugins as "plugin__name (type)".
 func (l *Loader) Describe() []string {
 	l.mu.Lock()

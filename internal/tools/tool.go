@@ -71,6 +71,11 @@ func DefaultRegistry(workdir string) *Registry {
 	r.Add(&MemoryTool{})
 	r.Add(&PatchTool{Workdir: workdir})
 	r.Add(&RunTool{Workdir: workdir})
+	r.Add(&DBTool{})
+	r.Add(&NotebookTool{Workdir: workdir})
+	r.Add(&APITool{})
+	r.Add(&VSCodeTool{Workdir: workdir})
+	r.Add(&ScaffoldTool{Workdir: workdir})
 	return r
 }
 

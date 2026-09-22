@@ -78,6 +78,9 @@ func TestLoopExecutesTools(t *testing.T) {
 	if res.Text != "final answer" || res.Rounds != 2 {
 		t.Fatalf("bad result: %+v", res)
 	}
+	if res.Calls != 1 {
+		t.Fatalf("want 1 call counted, got %d", res.Calls)
+	}
 	if len(toolEvents) != 1 || !strings.Contains(toolEvents[0], "ECHO:") {
 		t.Fatalf("bad tool events: %v", toolEvents)
 	}

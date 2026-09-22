@@ -32,9 +32,9 @@ func AllowedTools(m Mode, extra ...string) []string {
 	var base []string
 	switch m {
 	case Build:
-		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run"}
+		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "db", "notebook", "api", "vscode", "scaffold"}
 	case Plan:
-		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo"}
+		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db"}
 	default:
 		base = nil
 	}
@@ -69,6 +69,9 @@ func routing() string {
 		"\n- run code and show output: run tool (inline code or a file, 10 languages). run tests: testgen (use run filter for one test)." +
 		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
 		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
+		"\n- databases (ask for DSN, never invent): db tables/schema/query. notebooks: notebook cells (execute needs jupyter). REST APIs: api (any method, JSON body)." +
+		"\n- open files in the editor: vscode open. new react/express/fastapi projects: scaffold." +
+		"\nExamples (copy the shape, raw text only):\n<tool:browser>{\"url\": \"https://example.com\"}</tool:browser>\n<tool:run>{\"language\": \"python\", \"code\": \"print(1)\"}</tool:run>\n<tool:github>{\"action\": \"clone\", \"url\": \"owner/repo\"}</tool:github>\n<tool:db>{\"kind\": \"postgres\", \"dsn\": \"...\", \"action\": \"tables\"}</tool:db>" +
 		"\n- in PLAN mode bash/write/edit are disabled: use the git tool (log/diff/show/status all work) and read/grep/glob." +
 		"\n- run shell commands only via bash (project dir, destructive cmds are blocked)." +
 		"\n- stay on task: call only the tools needed for THIS request. Don't explore the repo for fun." +
@@ -80,7 +83,7 @@ func toolDocs(reg *tools.Registry, names []string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nTOOLS — to act, emit a line EXACTLY like this (raw text, never in code fences, args = valid JSON object):\n<tool:NAME>{\"arg\": \"value\"}</tool:NAME>\nExample: <tool:read>{\"path\": \"main.go\"}</tool:read>\nWait for each result before the next call. Max 8 rounds.\n")
+	b.WriteString("\nTOOLS — to act, emit a line EXACTLY like this (raw text, never in code fences, args = valid JSON object):\n<tool:NAME>{\"arg\": \"value\"}</tool:NAME>\nExample: <tool:read>{\"path\": \"main.go\"}</tool:read>\nOne call per line; several lines allowed. Wait for each result before the next call. Max 8 rounds.\n")
 	for _, n := range names {
 		t, ok := reg.Get(n)
 		if !ok {

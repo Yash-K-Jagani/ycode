@@ -195,7 +195,7 @@ Build mode tools (plan gets the read-only subset): `read` `write` `edit`
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`
-`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) — plus dynamic `mcp__*` and `plugin__*` tools.
+`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) — plus dynamic `mcp__*` and `plugin__*` tools.
 Chat code blocks get Chroma syntax highlighting; prompts carry the detected
 project language.
 

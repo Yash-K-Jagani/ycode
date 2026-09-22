@@ -106,6 +106,7 @@ func extractObject(s string) string {
 type Result struct {
 	Text   string
 	Rounds int
+	Calls  int
 }
 
 // Run executes the agentic loop: stream → parse tool calls → execute → feed back.
@@ -118,6 +119,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	cur := append([]apitypes.Message(nil), msgs...)
 	last := ""
 	lastGood := ""
+	totalCalls := 0
 	counts := map[string]int{}
 	cached := map[string]string{}
 	for round := 0; round < MaxRounds; round++ {
@@ -126,10 +128,10 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 		chunk, err := p.Stream(ctx, model, cur, tw)
 		if err != nil {
 			if lastGood != "" {
-				return Result{Text: lastGood, Rounds: round}, err
+				return Result{Text: lastGood, Rounds: round, Calls: totalCalls}, err
 			}
 			if last != "" {
-				return Result{Text: last, Rounds: round}, err
+				return Result{Text: last, Rounds: round, Calls: totalCalls}, err
 			}
 			return Result{}, err
 		}
@@ -140,8 +142,9 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 		last = full
 		calls := ParseCalls(full)
 		if len(calls) == 0 {
-			return Result{Text: stripToolTags(full), Rounds: round + 1}, nil
+			return Result{Text: stripToolTags(full), Rounds: round + 1, Calls: totalCalls}, nil
 		}
+		totalCalls += len(calls)
 		cur = append(cur, apitypes.Message{Role: apitypes.RoleAssistant, Content: full})
 		repeated := false
 		for _, c := range calls {
@@ -177,7 +180,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			if answer == "" {
 				answer = stripToolTags(last)
 			}
-			return Result{Text: answer + "\n\n(stopped: same tool call repeated — answer built from its result)", Rounds: round + 1}, nil
+			return Result{Text: answer + "\n\n(stopped: same tool call repeated — answer built from its result)", Rounds: round + 1, Calls: totalCalls}, nil
 		}
 	}
 	answer := stripToolTags(lastGood)
@@ -186,7 +189,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	} else {
 		answer += "\n…(tool round limit reached — answered from tool results)"
 	}
-	return Result{Text: answer, Rounds: MaxRounds}, nil
+	return Result{Text: answer, Rounds: MaxRounds, Calls: totalCalls}, nil
 }
 
 func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, c Call) (string, error) {

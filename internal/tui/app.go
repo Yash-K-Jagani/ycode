@@ -87,23 +87,28 @@ type Model struct {
 	watchCancel context.CancelFunc
 	watchTarget string
 
-	sideOn   bool
-	sessPTok int
-	sessCTok int
-	sessUSD  float64
-	lastCtx  int
-	lastCtxB int
+	sideOn         bool
+	sessPTok       int
+	sessCTok       int
+	sessUSD        float64
+	lastCtx        int
+	lastCtxB       int
+	toolCallsTotal int
+	toolTurns      int
+	toolModeTurns  int
 }
 
 type deltaMsg string
 type doneMsg struct {
-	text string
-	note string
-	ptok int
-	ctok int
-	usd  float64
-	ctx  int
-	ctxB int
+	text  string
+	note  string
+	ptok  int
+	ctok  int
+	usd   float64
+	ctx   int
+	ctxB  int
+	calls int
+	agent bool
 }
 
 type reviewPostDone struct {
@@ -605,6 +610,7 @@ func (m *Model) submit() tea.Cmd {
 		}
 		notes := []string{fmt.Sprintf("~%d tokens", promptTok)}
 		var answer string
+		turnCalls := 0
 		if len(allowed) == 0 {
 			if mode == modes.Chat && fileTaskRe.MatchString(userText) && prog != nil {
 				prog.Send(sysMsg("Tip: I have no file tools in chat mode — hit Tab or /build so I can read/edit files."))
@@ -641,6 +647,7 @@ func (m *Model) submit() tea.Cmd {
 					prog.Send(sysMsg("↳ retrying turn on fallback " + cand.label))
 				}
 				res, err := agent.Run(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool)
+				turnCalls += res.Calls
 				if err != nil && res.Text == "" {
 					if i < len(chain)-1 {
 						continue
@@ -672,7 +679,7 @@ func (m *Model) submit() tea.Cmd {
 			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
-		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget}
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, agent: len(allowed) > 0}
 	}
 }
 
@@ -743,6 +750,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessPTok += msg.ptok
 		m.sessCTok += msg.ctok
 		m.sessUSD += msg.usd
+		m.toolCallsTotal += msg.calls
+		if msg.agent {
+			m.toolModeTurns++
+			if msg.calls > 0 {
+				m.toolTurns++
+			}
+		}
 		if msg.ctxB > 0 {
 			m.lastCtx, m.lastCtxB = msg.ctx, msg.ctxB
 		}

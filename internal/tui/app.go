@@ -122,6 +122,14 @@ type reviewPostDone struct {
 type errMsg struct{ err error }
 type sysMsg string
 type toolMsg string
+
+// fileOpMsg renders a file write/edit as a distinct card (filename on top).
+type fileOpMsg struct {
+	op     string
+	path   string
+	detail string
+	ok     bool
+}
 type resetStreamMsg struct{}
 
 // storeInstalledMsg carries a finished store install to the UI thread.
@@ -226,6 +234,23 @@ func (m *Model) formatMsg(role apitypes.Role, content string) string {
 func (m *Model) appendSys(s string) {
 	st := lipgloss.NewStyle().Foreground(m.th.Dim).Background(sysBG).Padding(0, 1)
 	m.msgs = append(m.msgs, st.Render(s))
+	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+	m.vp.GotoBottom()
+}
+
+// appendFileCard renders a write/edit as a distinct card: filename on top.
+func (m *Model) appendFileCard(f fileOpMsg) {
+	mark := "✓"
+	if !f.ok {
+		mark = "✗"
+	}
+	path := f.path
+	if path == "" {
+		path = "(unknown file)"
+	}
+	head := fileCardHead(f.ok).Render(fmt.Sprintf("%s %s %s", mark, f.op, path))
+	body := fileCardStyle().Render(f.detail)
+	m.msgs = append(m.msgs, head+"\n"+body)
 	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 	m.vp.GotoBottom()
 }
@@ -469,6 +494,26 @@ func modelsPullCmd(model string) tea.Cmd {
 	}
 }
 
+func modelsImportCmd(workdir, path, name string) tea.Cmd {
+	return func() tea.Msg {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workdir, path)
+		}
+		out, err := registry.ImportGGUF(context.Background(), path, name)
+		if err != nil {
+			return sysMsg("import failed: " + err.Error() + "\n" + out)
+		}
+		return sysMsg(out + "\nSwitch with /models " + name)
+	}
+}
+
+func restOrEmpty(f []string, i int) string {
+	if i < len(f) {
+		return strings.Join(f[i:], " ")
+	}
+	return ""
+}
+
 // ragIngestCmd builds the repo vector index in the background.
 func (m *Model) ragIngestCmd(root string) tea.Cmd {
 	if root == "" {
@@ -574,9 +619,14 @@ func (m *Model) submit() tea.Cmd {
 				status = "error: " + err.Error()
 			}
 			audit.Log("tool", map[string]any{"tool": name, "args": truncateArgs(args), "status": status})
-			if prog != nil {
-				prog.Send(toolMsg(fmt.Sprintf("🔧 %s %s → %s", name, truncateArgs(args), status)))
+			if prog == nil {
+				return
 			}
+			if name == "write" || name == "edit" {
+				prog.Send(fileOpMsg{op: name, path: writeOpPath(args), detail: status, ok: err == nil})
+				return
+			}
+			prog.Send(toolMsg(fmt.Sprintf("🔧 %s %s → %s", name, truncateArgs(args), status)))
 		}
 		p, model, err := m.router.Active()
 		if err != nil {
@@ -766,6 +816,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.appendSys(string(msg))
+		return m, nil
+	case fileOpMsg:
+		if m.cancelled {
+			return m, nil
+		}
+		m.appendFileCard(msg)
 		return m, nil
 	case resetStreamMsg:
 		m.stream.Reset()

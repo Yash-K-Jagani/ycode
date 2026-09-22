@@ -42,6 +42,31 @@ func stripToolTags(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// dedupRepeats collapses 3rd+ occurrences of long repeated sentences,
+// keeping the first two. Counters small-model stutter in one answer.
+func dedupRepeats(s string) string {
+	lines := strings.Split(s, "\n")
+	seen := map[string]int{}
+	var out []string
+	for _, ln := range lines {
+		key := normText(ln)
+		if len(key) > 60 {
+			seen[key]++
+			if seen[key] > 2 {
+				continue
+			}
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
+
+// finalText cleans a model answer for display: strip echoed tags,
+// collapse repeated sentences.
+func finalText(s string) string {
+	return dedupRepeats(stripToolTags(s))
+}
+
 // normText collapses a response for repetition comparison.
 func normText(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
@@ -178,16 +203,16 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 		last = full
 		norm := normText(full)
 		if isRepeat(norm, prevNorm) {
-			answer := stripToolTags(lastGood)
+			answer := finalText(lastGood)
 			if answer == "" {
-				answer = stripToolTags(full)
+				answer = finalText(full)
 			}
 			return Result{Text: answer + "\n\n(stopped: response repeating — answered from collected results)", Rounds: round + 1, Calls: totalCalls}, nil
 		}
 		prevNorm = norm
 		calls := ParseCalls(full)
 		if len(calls) == 0 {
-			return Result{Text: stripToolTags(full), Rounds: round + 1, Calls: totalCalls}, nil
+			return Result{Text: finalText(full), Rounds: round + 1, Calls: totalCalls}, nil
 		}
 		totalCalls += len(calls)
 		cur = append(cur, apitypes.Message{Role: apitypes.RoleAssistant, Content: full})
@@ -221,16 +246,16 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			}
 		}
 		if repeated {
-			answer := stripToolTags(lastGood)
+			answer := finalText(lastGood)
 			if answer == "" {
-				answer = stripToolTags(last)
+				answer = finalText(last)
 			}
 			return Result{Text: answer + "\n\n(stopped: same tool call repeated — answer built from its result)", Rounds: round + 1, Calls: totalCalls}, nil
 		}
 	}
-	answer := stripToolTags(lastGood)
+	answer := finalText(lastGood)
 	if answer == "" {
-		answer = stripToolTags(last) + "\n…(tool round limit reached)"
+		answer = finalText(last) + "\n…(tool round limit reached)"
 	} else {
 		answer += "\n…(tool round limit reached — answered from tool results)"
 	}

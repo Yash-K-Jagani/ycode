@@ -227,3 +227,19 @@ func TestProseRepeatStops(t *testing.T) {
 		t.Fatalf("want stop note: %q", res.Text)
 	}
 }
+
+func TestDedupRepeats(t *testing.T) {
+	line := "I will now create the file for you as requested in this task today."
+	in := strings.Join([]string{"start", line, "middle", line, line, line, "end"}, "\n")
+	got := dedupRepeats(in)
+	if strings.Count(got, line) != 2 {
+		t.Fatalf("want 2 kept, got:\n%s", got)
+	}
+	short := "ok\nok\nok\nok"
+	if dedupRepeats(short) != short {
+		t.Fatal("short lines must pass through")
+	}
+	if got := finalText("plain"); got != "plain" {
+		t.Fatalf("plain altered: %q", got)
+	}
+}

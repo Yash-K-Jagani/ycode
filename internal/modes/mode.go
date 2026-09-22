@@ -32,9 +32,9 @@ func AllowedTools(m Mode, extra ...string) []string {
 	var base []string
 	switch m {
 	case Build:
-		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "db", "notebook", "api", "vscode", "scaffold"}
+		base = []string{"read", "write", "edit", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "db", "notebook", "api", "vscode", "scaffold", "models"}
 	case Plan:
-		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db"}
+		base = []string{"read", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models"}
 	default:
 		base = nil
 	}
@@ -83,6 +83,7 @@ func routing() string {
 		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
 		"\n- databases (ask for DSN, never invent): db tables/schema/query. notebooks: notebook cells (execute needs jupyter). REST APIs: api (any method, JSON body)." +
 		"\n- open files in the editor: vscode open. new react/express/fastapi projects: scaffold." +
+		"\n- local .gguf files: models info to inspect, models import to register with Ollama." +
 		"\nExamples (copy the shape, raw text only):\n<tool:browser>{\"url\": \"https://example.com\"}</tool:browser>\n<tool:run>{\"language\": \"python\", \"code\": \"print(1)\"}</tool:run>\n<tool:github>{\"action\": \"clone\", \"url\": \"owner/repo\"}</tool:github>\n<tool:db>{\"kind\": \"postgres\", \"dsn\": \"...\", \"action\": \"tables\"}</tool:db>" +
 		"\n- in PLAN mode bash/write/edit are disabled: use the git tool (log/diff/show/status all work) and read/grep/glob." +
 		"\n- run shell commands only via bash (project dir, destructive cmds are blocked)." +

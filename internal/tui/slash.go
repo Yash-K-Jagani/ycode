@@ -308,9 +308,21 @@ func slashRegistry() map[string]slashHandler {
 				m.appendSys("Pulling " + f[1] + " (may take a while)…")
 				return "", modelsPullCmd(f[1])
 			}
+			if len(f) >= 2 && f[0] == "import" {
+				m.appendSys("Importing " + f[1] + " into Ollama (may take a while)…")
+				return "", modelsImportCmd(m.workdir, f[1], restOrEmpty(f, 2))
+			}
+			if len(f) == 2 && f[0] == "info" {
+				raw, _ := json.Marshal(map[string]string{"action": "info", "path": f[1]})
+				out, err := (&tools.ModelsTool{Workdir: m.workdir}).Run(ctx, raw)
+				if err != nil {
+					return "gguf info: " + err.Error(), nil
+				}
+				return out, nil
+			}
 			entries, note := listEntries(ctx, m)
 			if args == "" {
-				return modelsHelp(m, entries, note) + "\n/models install <ollama-model> — one-click install", nil
+				return modelsHelp(m, entries, note) + "\n/models install <ollama-model> — one-click install\n/models import <file.gguf> [name] — register local GGUF\n/models info <file.gguf> — inspect", nil
 			}
 			return selectModel(m, entries, args), nil
 		},

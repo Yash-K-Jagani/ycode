@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -16,7 +17,32 @@ var (
 	chipBG = lipgloss.AdaptiveColor{Light: "#DFDFF2", Dark: "#2E2E4A"}
 	chipFG = lipgloss.AdaptiveColor{Light: "#333355", Dark: "#CFCFEA"}
 	sysBG  = lipgloss.AdaptiveColor{Light: "#EFEFEF", Dark: "#1B1B28"}
+	fileBG = lipgloss.AdaptiveColor{Light: "#E4DFF2", Dark: "#2C2340"}
+	fileFG = lipgloss.AdaptiveColor{Light: "#2A1F4D", Dark: "#D9CBFF"}
 )
+
+func fileCardStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(fileBG).Foreground(fileFG).Padding(0, 1)
+}
+
+func fileCardHead(ok bool) lipgloss.Style {
+	fg := lipgloss.AdaptiveColor{Light: "#1F7A3D", Dark: "#2DE1A7"}
+	if !ok {
+		fg = lipgloss.AdaptiveColor{Light: "#B3261E", Dark: "#FF5555"}
+	}
+	return lipgloss.NewStyle().Bold(true).Background(fileBG).Foreground(fg).Padding(0, 1)
+}
+
+// writeOpPath extracts the path from write/edit tool args.
+func writeOpPath(args string) string {
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err != nil {
+		return ""
+	}
+	return v.Path
+}
 
 func codeStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Background(codeBG).Foreground(codeFG).Padding(0, 1)

@@ -80,3 +80,15 @@ func TestHighlight(t *testing.T) {
 		t.Fatalf("bad render:\n%s", out)
 	}
 }
+
+func TestWriteOpPath(t *testing.T) {
+	if got := writeOpPath(`{"path": "a/b.go", "content": "x"}`); got != "a/b.go" {
+		t.Fatalf("%q", got)
+	}
+	if writeOpPath(`{nope`) != "" {
+		t.Fatal("bad json should give empty")
+	}
+	if writeOpPath(`{"content":"x"}`) != "" {
+		t.Fatal("missing path should give empty")
+	}
+}

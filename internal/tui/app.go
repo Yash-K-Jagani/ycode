@@ -673,6 +673,22 @@ func (m *Model) submit() tea.Cmd {
 				if i > 0 {
 					notes = append(notes, "fell back to "+cand.label)
 				}
+				// Self-correction: pasted file content instead of acting.
+				// One bounded retry round, then whatever comes back stands.
+				if toolCalls == 0 && looksLikeWriteTask(userText) && hasCodeFence(answer) {
+					if prog != nil {
+						prog.Send(sysMsg("↳ pasted content instead of writing — retrying with tools…"))
+					}
+					retryMsgs := append(append([]apitypes.Message(nil), msgs...),
+						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
+						apitypes.Message{Role: apitypes.RoleSystem, Content: "You pasted file content as text instead of using the write/edit tool. Redo this turn properly: emit ONLY tool call(s) that perform the write, no pasted content."})
+					res2, err2 := agent.Run(ctx, cand.p, cand.model, retryMsgs, reg, allowed, hookset, w, onTool)
+					turnCalls += res2.Calls
+					if err2 == nil || res2.Text != "" {
+						answer = res2.Text
+						notes = append(notes, "self-corrected to tools")
+					}
+				}
 				if toolCalls == 0 && fileTaskRe.MatchString(userText) {
 					notes = append(notes, "no tools were called — rephrase with explicit paths, or try a larger coder model (/models)")
 				}

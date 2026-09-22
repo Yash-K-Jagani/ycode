@@ -822,6 +822,14 @@ func doctorReport(ctx context.Context, m *Model) string {
 
 var fileTaskRe = regexp.MustCompile(`(?i)\b(read|edit|write|create|fix|update|delete|open|list|show|find|search|run|test|clone|review|refactor)\b.*(file|folder|dir|code|repo|test|diff|path|\.\w{1,5}\b)|(\bfile\b|\bfolder\b|\bdirectory\b|\brepo\b)`)
 
+// looksLikeWriteTask matches requests to put content into a file.
+var writeTaskRe = regexp.MustCompile(`(?i)\b(write|create|save|put|add|insert|generate)\b.{0,50}\b(files?|notes?|scripts?|into|in|to|config|readme)\b|\bcreate\s+a\s+file\b`)
+
+// hasCodeFence reports pasted code content (the write-instead-of-acting dodge).
+func hasCodeFence(s string) bool { return strings.Contains(s, "```") }
+
+func looksLikeWriteTask(s string) bool { return writeTaskRe.MatchString(s) }
+
 func ragLoad(m *Model) (rag.Index, bool) {
 	if m.ragIdx != nil && len(m.ragIdx.Chunks) > 0 {
 		return *m.ragIdx, true

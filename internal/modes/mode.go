@@ -79,6 +79,7 @@ func routing() string {
 		"\n- map directories: tree. multi-step work: track it with todo. remember user facts: memory. apply a unified diff: patch." +
 		"\n- run code and show output: run tool (inline code or a file, 10 languages). run tests: testgen (use run filter for one test)." +
 		"\n- to ADD tests: write the test file first (e.g. *_test.go), then verify with testgen." +
+		"\n- When asked to write/create/edit file content: NEVER paste the content as your answer — ALWAYS emit write/edit tool calls that do it. Pasting content instead of acting is a failure." +
 		"\n- BIG task? FIRST break it into small steps with todo add (one per step, keep each tiny), work them in order, mark each done. The user watches this list live." +
 		"\n- databases (ask for DSN, never invent): db tables/schema/query. notebooks: notebook cells (execute needs jupyter). REST APIs: api (any method, JSON body)." +
 		"\n- open files in the editor: vscode open. new react/express/fastapi projects: scaffold." +

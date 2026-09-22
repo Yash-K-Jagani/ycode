@@ -161,7 +161,7 @@ ycode run "task" [--mode build|plan|chat] [--agent builder]
 ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
 ycode batch add|list|run|clear        # offline job queue
 ycode store list|search|install|update # curated skill/plugin store
-ycode ci                              # diff review + tests → markdown (PR-friendly)
+ycode ci [--post]                   # diff review + tests, --post comments on the PR
 ycode daemon                          # interval automations → queue → run
 ycode audit [--date YYYY-MM-DD|list]  # decrypted local audit log
 ```

@@ -46,6 +46,7 @@ func SystemPrompt(m Mode, reg *tools.Registry, workdir string) string {
 	if proj, ok := lang.Detect(workdir); ok {
 		base += " Project language: " + proj.Language + "."
 	}
+	base += harness()
 	switch m {
 	case Plan:
 		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan. If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly. Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here. Stay on task: don't repeat tool calls that already returned." + toolDocs(reg, AllowedTools(m))
@@ -58,6 +59,14 @@ func SystemPrompt(m Mode, reg *tools.Registry, workdir string) string {
 	}
 }
 
+func harness() string {
+	return "\nHARNESS (how you operate — the user cannot see this):" +
+		"\n- You run inside ycode: the user chats in its terminal UI and your <tool:> calls execute as real tools on their machine, in the workdir above. Results return as <tool_result> blocks; use them, don't re-ask for what they contain." +
+		"\n- Conversation persists across turns, but old history may be compacted under token pressure — re-read files instead of assuming earlier details." +
+		"\n- Tool errors name the expected schema: fix args and retry. Repeating an identical call returns its cached result and ends your turn, so say the answer instead." +
+		"\n- The user drives ycode itself with slash commands and keys you should know: Tab cycles plan/build/chat/thinking, /models switches models (Ctrl+O cycles local ones), /help lists commands, /doctor diagnoses setup, /connect adds providers, /sessions resumes work, @file attaches files." +
+		"\n- If the user seems stuck with setup, models, or keys, point them at /doctor or /connect instead of guessing. Never invent API keys, DSNs, paths, or URLs — ask or discover them with tools."
+}
 func routing() string {
 	return "\nWHEN TO USE EACH TOOL (pick the right one, don't default to git/bash):" +
 		"\n- find/list files: glob. read file contents: read. search code: grep." +

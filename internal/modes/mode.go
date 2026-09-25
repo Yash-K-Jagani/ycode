@@ -66,7 +66,9 @@ func SystemPrompt(m Mode, reg *tools.Registry, workdir, model string) string {
 		if isSmallModel(model) {
 			rt = shortRouting()
 		}
-		return base + "\nMODE: BUILD. Use tools to read, write, edit and verify code. After edits, re-read or run tests when sensible." + rt + docs(AllowedTools(m))
+		return base + "\nMODE: BUILD. START BUILDING IMMEDIATELY: first tool call does real work (orient with tree/glob, then create files) — no preamble questions, no explanations before acting." +
+			" Ambiguity is resolved by reasonable defaults you state briefly AFTER the work, never by asking first (questions belong to plan mode)." +
+			" Use tools to read, write, edit and verify code. After edits, re-read or run tests when sensible." + rt + docs(AllowedTools(m))
 	case Thinking:
 		return base + "\nMODE: THINKING. Think step by step inside <scratchpad>...</scratchpad> (visible), then give the final answer. No tools in this mode — reason from conversation history."
 	default:
@@ -115,7 +117,7 @@ func harness() string {
 // shortRouting is the compact tool guide for small models.
 func shortRouting() string {
 	return "\nTOOLS: find files glob, read files read, search grep, write/edit files to change them, run tests testgen, shell bash, git history git." +
-		"\nRULES: never paste file content (use write/edit), never bare shell commands (use tool calls), never write result blocks, fix bad args and retry.\n"
+		"\nRULES: START BUILDING IMMEDIATELY — act first with tools (no questions, no preamble), never paste file content (use write/edit), never bare shell commands (use tool calls), never write result blocks, fix bad args and retry.\n"
 }
 func routing() string {
 	return "\nWHEN TO USE EACH TOOL (pick the right one, don't default to git/bash):" +

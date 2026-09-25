@@ -83,3 +83,20 @@ func TestPromptStaysLean(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildActsFirst(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Add(&tools.ReadTool{})
+	for _, model := range []string{"big-model", "tiny-1b"} {
+		p := SystemPrompt(Build, reg, t.TempDir(), model)
+		for _, want := range []string{"START BUILDING IMMEDIATELY", "no preamble"} {
+			if !strings.Contains(p, want) {
+				t.Fatalf("model %s missing %q", model, want)
+			}
+		}
+	}
+	small := SystemPrompt(Build, reg, t.TempDir(), "tiny-1b")
+	if !strings.Contains(small, "act first") {
+		t.Fatal("compact routing should keep act-first")
+	}
+}

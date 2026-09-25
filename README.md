@@ -106,6 +106,7 @@ list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
 - `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.
+- Codebase-aware: every build/plan turn sees the repo tree, README head, `AGENTS.md` rules, and git branch/status — plus `edit` tolerates `12: ` line prefixes and suggests close matches on miss.
 
 ---
 

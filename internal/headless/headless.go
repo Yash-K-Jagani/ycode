@@ -61,6 +61,9 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 	if o.Mode == modes.Build || o.Mode == modes.Plan {
 		sys += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +
 			"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
+		if brief := yctx.Brief(o.Workdir); brief != "" {
+			sys += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
+		}
 	}
 	msgs := []apitypes.Message{
 		{Role: apitypes.RoleSystem, Content: sys},

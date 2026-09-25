@@ -113,3 +113,38 @@ func TestSummary(t *testing.T) {
 		t.Fatalf("summary must work read-only: %v", err)
 	}
 }
+
+func TestEditLineNumberPrefix(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	p := filepath.Join(dir, "f.txt")
+	_ = os.WriteFile(p, []byte("alpha\nbeta\ngamma\n"), 0o644)
+	ed := &EditTool{Workdir: dir}
+	// model copies "2: beta" from read output — must still apply
+	out, err := ed.Run(ctx, json.RawMessage(`{"path":"f.txt","old_string":"2: beta","new_string":"BETA"}`))
+	if err != nil {
+		t.Fatalf("numbered anchor failed: %v", err)
+	}
+	if !strings.Contains(out, "edited") {
+		t.Fatalf("%q", out)
+	}
+	data, _ := os.ReadFile(p)
+	if string(data) != "alpha\nBETA\ngamma\n" {
+		t.Fatalf("bad apply: %q", data)
+	}
+}
+
+func TestEditMissSuggests(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	p := filepath.Join(dir, "f.txt")
+	_ = os.WriteFile(p, []byte("const timeoutMs = 5000\nconst retries = 3\n"), 0o644)
+	ed := &EditTool{Workdir: dir}
+	_, err := ed.Run(ctx, json.RawMessage(`{"path":"f.txt","old_string":"timeoutMs = 9000","new_string":"x"}`))
+	if err == nil || !strings.Contains(err.Error(), "Did you mean") {
+		t.Fatalf("want suggestions, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "L1:") {
+		t.Fatalf("want line refs: %v", err)
+	}
+}

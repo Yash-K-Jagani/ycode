@@ -725,6 +725,9 @@ func (m *Model) submit() tea.Cmd {
 		if mode == modes.Build || mode == modes.Plan {
 			sys += "\nRepo tree (" + workdir + ") — real paths, use them directly:\n" + yctx.Tree(workdir, 150, 4000) +
 				"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
+			if brief := yctx.Brief(workdir); brief != "" {
+				sys += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
+			}
 		}
 		// Local RAG: retrieve repo context when an index exists.
 		ragNote := ""

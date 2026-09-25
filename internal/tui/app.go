@@ -105,6 +105,11 @@ type Model struct {
 
 	sp        spinner.Model
 	busySince time.Time
+
+	showTree bool
+	compact  bool
+
+	toasts []toast
 }
 
 type deltaMsg string
@@ -178,7 +183,8 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 	ta.CharLimit = 8000
 	ta.SetHeight(3)
 	vp := viewport.New(80, 20)
-	th := theme.Dark()
+	th := theme.For(cfg.Theme)
+	ApplyTheme(th)
 	ag, _ := agents.Get("builder")
 	em := embed.New(cfg.OllamaHost, "")
 	sp := spinner.New()
@@ -338,7 +344,8 @@ func (m *Model) atItems() ([]slashItem, string) {
 	if m.busy || m.atHide {
 		return nil, ""
 	}
-	if strings.HasPrefix(strings.TrimSpace(m.ta.Value()), "/") {
+	trim := strings.TrimSpace(m.ta.Value())
+	if strings.HasPrefix(trim, "/") || strings.HasPrefix(trim, ":") {
 		return nil, ""
 	}
 	token, ok := atToken(m.ta.Value())
@@ -577,7 +584,10 @@ func (m *Model) submit() tea.Cmd {
 	if text == "" {
 		return nil
 	}
-	if strings.HasPrefix(text, "/") {
+	if strings.HasPrefix(text, "/") || strings.HasPrefix(text, ":") {
+		if strings.HasPrefix(text, ":") {
+			text = "/" + text[1:]
+		}
 		name := strings.Fields(text)[0]
 		args := strings.TrimSpace(strings.TrimPrefix(text, name))
 		h, ok := slashRegistry()[name]
@@ -924,11 +934,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		return m, nil
+	case toastExpireMsg:
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = msg.Width, msg.Height
-		m.vp.Width = msg.Width
+		side := 0
 		if m.sideOn && msg.Width > sideWidth+40 {
-			m.vp.Width = msg.Width - sideWidth - 3
+			side += sideWidth + 3
+		}
+		if m.showTree && msg.Width > fileTreeWidth+40 {
+			side += fileTreeWidth + 3
+		}
+		if side > 0 && msg.Width > side+40 {
+			m.vp.Width = msg.Width - side
+		} else {
+			m.vp.Width = msg.Width
 		}
 		m.vp.Height = msg.Height - 7
 		m.ta.SetWidth(msg.Width - 4)
@@ -1198,9 +1218,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+b":
 			m.sideOn = !m.sideOn
 			m.vp.Width = m.winW
+			side := 0
 			if m.sideOn && m.winW > sideWidth+40 {
-				m.vp.Width = m.winW - sideWidth - 3
+				side += sideWidth + 3
 			}
+			if m.showTree && m.winW > fileTreeWidth+40 {
+				side += fileTreeWidth + 3
+			}
+			if side > 0 && m.winW > side+40 {
+				m.vp.Width = m.winW - side
+			}
+			return m, nil
+		case "ctrl+\\":
+			m.showTree = !m.showTree
+			m.vp.Width = m.winW
+			side := 0
+			if m.sideOn && m.winW > sideWidth+40 {
+				side += sideWidth + 3
+			}
+			if m.showTree && m.winW > fileTreeWidth+40 {
+				side += fileTreeWidth + 3
+			}
+			if side > 0 && m.winW > side+40 {
+				m.vp.Width = m.winW - side
+			}
+			return m, nil
+		case "ctrl+=", "ctrl+_", "ctrl+]":
+			m.compact = !m.compact
+			SetCompact(m.compact)
 			return m, nil
 		case "tab":
 			m.cycleMode(1)
@@ -1246,6 +1291,9 @@ func (m Model) View() string {
 	}
 	input := chip + "\n" + m.ta.View()
 	chat := m.vp.View()
+	if m.showTree {
+		chat = lipgloss.JoinHorizontal(lipgloss.Top, m.fileTreeView(m.vp.Height), chat)
+	}
 	if m.sideOn && m.winW > sideWidth+40 {
 		chat = lipgloss.JoinHorizontal(lipgloss.Top, chat, m.sidebar(m.vp.Height))
 	}
@@ -1261,6 +1309,9 @@ func (m Model) View() string {
 	}
 	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(statusText) + badge
 	base := out + input + "\n" + status
+	if t := m.renderToasts(); t != "" {
+		base = t + "\n" + base
+	}
 	if m.conn != nil {
 		w, h := m.winW, m.winH
 		if w <= 0 {

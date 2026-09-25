@@ -14,7 +14,14 @@ func TestFilterSlash(t *testing.T) {
 		t.Fatalf("bare / should list all: %d vs %d", len(all), len(slashList()))
 	}
 	got := filterSlash("/mod")
-	if len(got) != 2 || got[0].Name != "/models" || got[1].Name != "/model" {
+	if len(got) != 2 {
+		t.Fatalf("bad /mod filter: %+v", got)
+	}
+	has := map[string]bool{}
+	for _, it := range got {
+		has[it.Name] = true
+	}
+	if !has["/models"] || !has["/model"] {
 		t.Fatalf("bad /mod filter: %+v", got)
 	}
 	got = filterSlash("/models ollama")

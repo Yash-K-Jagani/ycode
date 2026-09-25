@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sahilm/fuzzy"
 )
 
 type slashItem struct {
@@ -43,11 +44,36 @@ func slashList() []slashItem {
 		{"/hooks", "configured hooks"},
 		{"/prompts", "prompt library"},
 		{"/plugins", "script plugins"},
+		{"/theme", "switch theme"},
 	}
 }
 
-// filterSlash returns matching commands for an input starting with "/".
+func iconFor(name string) string {
+	switch {
+	case strings.HasPrefix(name, "/models"), strings.HasPrefix(name, "/model"), strings.HasPrefix(name, "/variants"):
+		return "🤖"
+	case strings.HasPrefix(name, "/store"), strings.HasPrefix(name, "/skills"), strings.HasPrefix(name, "/plugins"), strings.HasPrefix(name, "/prompts"):
+		return "📦"
+	case strings.HasPrefix(name, "/sessions"), strings.HasPrefix(name, "/new"), strings.HasPrefix(name, "/export"), strings.HasPrefix(name, "/undo"):
+		return "📁"
+	case strings.HasPrefix(name, "/review"), strings.HasPrefix(name, "/test"), strings.HasPrefix(name, "/refactor"), strings.HasPrefix(name, "/rag"):
+		return "🔍"
+	case strings.HasPrefix(name, "/plan"), strings.HasPrefix(name, "/build"), strings.HasPrefix(name, "/chat"), strings.HasPrefix(name, "/thinking"):
+		return "⚡"
+	case strings.HasPrefix(name, "/doctor"), strings.HasPrefix(name, "/status"), strings.HasPrefix(name, "/connect"), strings.HasPrefix(name, "/agent"):
+		return "🛠"
+	case strings.HasPrefix(name, "/theme"):
+		return "🎨"
+	default:
+		return "•"
+	}
+}
+
+// filterSlash returns matching commands for an input starting with "/" or ":".
 func filterSlash(input string) []slashItem {
+	if strings.HasPrefix(input, ":") {
+		input = "/" + input[1:]
+	}
 	if !strings.HasPrefix(input, "/") {
 		return nil
 	}
@@ -55,11 +81,21 @@ func filterSlash(input string) []slashItem {
 	if i := strings.IndexByte(input, ' '); i >= 0 {
 		token = input[:i]
 	}
+	if token == "/" {
+		return slashList()
+	}
+	list := slashList()
+	names := make([]string, len(list))
+	for i, it := range list {
+		names[i] = it.Name
+	}
+	matches := fuzzy.Find(token, names)
+	if len(matches) == 0 {
+		return nil
+	}
 	var out []slashItem
-	for _, it := range slashList() {
-		if strings.HasPrefix(it.Name, token) {
-			out = append(out, it)
-		}
+	for _, m := range matches {
+		out = append(out, list[m.Index])
 	}
 	return out
 }
@@ -95,7 +131,8 @@ func renderPalette(items []slashItem, selected, width int, accent lipgloss.Color
 		if len(name) > 16 {
 			name = name[:16]
 		}
-		line := name + strings.Repeat(" ", 18-len(name)) + it.Hint
+		icon := iconFor(it.Name)
+		line := icon + " " + name + strings.Repeat(" ", 18-len(name)) + it.Hint
 		if len(line) > width-6 {
 			line = line[:width-6] + "…"
 		}

@@ -10,6 +10,8 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 )
 
 var (
@@ -27,10 +29,33 @@ var (
 	addBG  = lipgloss.AdaptiveColor{Light: "#E1F3E1", Dark: "#1A3320"}
 	addFG  = lipgloss.AdaptiveColor{Light: "#1F6B2E", Dark: "#56D364"}
 	gutFG  = lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"}
+
+	compactMode bool
 )
 
+func SetCompact(v bool) { compactMode = v }
+
+func ApplyTheme(t theme.Theme) {
+	codeBG, codeFG = t.CodeBG, t.CodeFG
+	chipBG, chipFG = t.ChipBG, t.ChipFG
+	sysBG = t.SysBG
+	fileBG, fileFG = t.FileBG, t.FileFG
+	cmdBG, cmdFG = t.CmdBG, t.CmdFG
+	delBG, delFG = t.DelBG, t.DelFG
+	addBG, addFG = t.AddBG, t.AddFG
+	gutFG = t.GutFG
+}
+
+func pad() (int, int) {
+	if compactMode {
+		return 0, 0
+	}
+	return 0, 1
+}
+
 func cmdCardStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Background(cmdBG).Foreground(cmdFG).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Background(cmdBG).Foreground(cmdFG).Padding(y, x)
 }
 
 func cmdCardHead(ok bool) lipgloss.Style {
@@ -38,7 +63,8 @@ func cmdCardHead(ok bool) lipgloss.Style {
 	if !ok {
 		fg = lipgloss.AdaptiveColor{Light: "#B3261E", Dark: "#FF5555"}
 	}
-	return lipgloss.NewStyle().Bold(true).Background(cmdBG).Foreground(fg).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Bold(true).Background(cmdBG).Foreground(fg).Padding(y, x)
 }
 
 func delLineStyle() lipgloss.Style {
@@ -99,7 +125,8 @@ func renderDiff(body string) string {
 }
 
 func fileCardStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Background(fileBG).Foreground(fileFG).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Background(fileBG).Foreground(fileFG).Padding(y, x)
 }
 
 func fileCardHead(ok bool) lipgloss.Style {
@@ -107,7 +134,8 @@ func fileCardHead(ok bool) lipgloss.Style {
 	if !ok {
 		fg = lipgloss.AdaptiveColor{Light: "#B3261E", Dark: "#FF5555"}
 	}
-	return lipgloss.NewStyle().Bold(true).Background(fileBG).Foreground(fg).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Bold(true).Background(fileBG).Foreground(fg).Padding(y, x)
 }
 
 // writeOpPath extracts the path from write/edit tool args.
@@ -122,11 +150,13 @@ func writeOpPath(args string) string {
 }
 
 func codeStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Background(codeBG).Foreground(codeFG).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Background(codeBG).Foreground(codeFG).Padding(y, x)
 }
 
 func codePad() lipgloss.Style {
-	return lipgloss.NewStyle().Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Padding(y, x)
 }
 
 // highlight renders code with Chroma (dracula). ok=false → use the plain panel.
@@ -158,7 +188,8 @@ func highlight(lang, code string) (out string, ok bool) {
 }
 
 func chipStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Background(chipBG).Foreground(chipFG).Padding(0, 1)
+	y, x := pad()
+	return lipgloss.NewStyle().Background(chipBG).Foreground(chipFG).Padding(y, x)
 }
 
 type seg struct {

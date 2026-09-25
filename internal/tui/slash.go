@@ -14,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Yash-K-Jagani/ycode/internal/agent"
 	"github.com/Yash-K-Jagani/ycode/internal/agents"
@@ -28,6 +29,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/store"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
+	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 )
 
 type slashHandler func(ctx context.Context, m *Model, args string) (string, tea.Cmd)
@@ -161,7 +163,7 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /theme\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
 		},
 		"/tools": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			names := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
@@ -187,7 +189,8 @@ func slashRegistry() map[string]slashHandler {
 			if err != nil {
 				return "undo: " + err.Error(), nil
 			}
-			return "Restored " + path + " from last backup.", nil
+			m.addToast("Restored " + path)
+			return "", nil
 		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if strings.TrimSpace(args) == "fix" {
@@ -798,6 +801,21 @@ func slashRegistry() map[string]slashHandler {
 			}
 			b.WriteString("\nTip (~4GB VRAM): prefer Q4_K_M 7B-or-smaller, e.g. qwen2.5-coder:7b-instruct-q4_K_M.\nSwap with /models <number>; install with /models install <name>.")
 			return b.String(), nil
+		},
+		"/theme": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			arg := strings.ToLower(strings.TrimSpace(args))
+			if arg == "" {
+				return "Theme: " + m.th.Name + " (use /theme dark|light)", nil
+			}
+			if arg != "dark" && arg != "light" {
+				return "Usage: /theme dark|light", nil
+			}
+			m.th = theme.For(arg)
+			ApplyTheme(m.th)
+			m.sp.Style = lipgloss.NewStyle().Foreground(m.th.Accent)
+			m.cfg.Theme = arg
+			_ = m.cfg.Save()
+			return "Theme: " + arg, nil
 		},
 	}
 }

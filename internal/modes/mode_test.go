@@ -64,3 +64,22 @@ func TestCompactSmallModel(t *testing.T) {
 		t.Fatal("big models must not match")
 	}
 }
+
+func TestPromptStaysLean(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Add(&tools.ReadTool{})
+	full := SystemPrompt(Build, reg, t.TempDir(), "big-model")
+	small := SystemPrompt(Build, reg, t.TempDir(), "tiny-1b")
+	if len(small) >= len(full) {
+		t.Fatal("compact must be shorter")
+	}
+	// tripwire against prompt bloat: full build prompt stays under ~12KB
+	if len(full) > 12*1024 {
+		t.Fatalf("prompt bloated: %d bytes", len(full))
+	}
+	for _, want := range []string{"TOOLS", "ENVIRONMENT", "never fenced", "Max 8 rounds"} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -19,7 +20,83 @@ var (
 	sysBG  = lipgloss.AdaptiveColor{Light: "#EFEFEF", Dark: "#1B1B28"}
 	fileBG = lipgloss.AdaptiveColor{Light: "#E4DFF2", Dark: "#2C2340"}
 	fileFG = lipgloss.AdaptiveColor{Light: "#2A1F4D", Dark: "#D9CBFF"}
+	cmdBG  = lipgloss.AdaptiveColor{Light: "#F3EAD6", Dark: "#38300F"}
+	cmdFG  = lipgloss.AdaptiveColor{Light: "#5C4A1F", Dark: "#E8C86A"}
+	delBG  = lipgloss.AdaptiveColor{Light: "#F9E2E2", Dark: "#3D1A1A"}
+	delFG  = lipgloss.AdaptiveColor{Light: "#8A1F1F", Dark: "#FF7B72"}
+	addBG  = lipgloss.AdaptiveColor{Light: "#E1F3E1", Dark: "#1A3320"}
+	addFG  = lipgloss.AdaptiveColor{Light: "#1F6B2E", Dark: "#56D364"}
+	gutFG  = lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"}
 )
+
+func cmdCardStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(cmdBG).Foreground(cmdFG).Padding(0, 1)
+}
+
+func cmdCardHead(ok bool) lipgloss.Style {
+	fg := lipgloss.AdaptiveColor{Light: "#8A6D1F", Dark: "#E8C86A"}
+	if !ok {
+		fg = lipgloss.AdaptiveColor{Light: "#B3261E", Dark: "#FF5555"}
+	}
+	return lipgloss.NewStyle().Bold(true).Background(cmdBG).Foreground(fg).Padding(0, 1)
+}
+
+func delLineStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(delBG).Foreground(delFG)
+}
+
+func addLineStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(addBG).Foreground(addFG)
+}
+
+func gutterStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(gutFG)
+}
+
+// extractDiff pulls the first ```diff block body out of tool result text.
+func extractDiff(s string) string {
+	i := strings.Index(s, "```diff")
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len("```diff"):]
+	j := strings.Index(rest, "```")
+	if j < 0 {
+		return strings.TrimSpace(rest)
+	}
+	return strings.TrimSpace(rest[:j])
+}
+
+// gutterize prefixes physical lines with a dim right-aligned gutter.
+func gutterize(s string) string {
+	lines := strings.Split(s, "\n")
+	w := len(fmt.Sprintf("%d", len(lines)))
+	for i, ln := range lines {
+		lines[i] = gutterStyle().Render(fmt.Sprintf(fmt.Sprintf("%%%dd", w), i+1)) + " │ " + ln
+	}
+	return strings.Join(lines, "\n")
+}
+
+// renderDiff colors unified-diff lines: red bg for removals, green bg for
+// additions, dim for hunk headers. No gutter (headers carry real numbers).
+func renderDiff(body string) string {
+	var out []string
+	for _, ln := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(ln, "+++"), strings.HasPrefix(ln, "---"):
+			out = append(out, chipStyle().Render(ln))
+		case strings.HasPrefix(ln, "@@"):
+			out = append(out, chipStyle().Render(ln))
+		case strings.HasPrefix(ln, "+"):
+			out = append(out, addLineStyle().Render(ln))
+		case strings.HasPrefix(ln, "-"):
+			out = append(out, delLineStyle().Render(ln))
+		default:
+			out = append(out, lipgloss.NewStyle().Faint(true).Render(ln))
+		}
+	}
+	return strings.Join(out, "\n")
+}
 
 func fileCardStyle() lipgloss.Style {
 	return lipgloss.NewStyle().Background(fileBG).Foreground(fileFG).Padding(0, 1)
@@ -159,10 +236,12 @@ func renderAssistant(content string) string {
 			if langName != "" {
 				b.WriteString(chipStyle().Render(langName) + "\n")
 			}
-			if hl, ok := highlight(langName, body); ok {
-				b.WriteString(codePad().Render(hl) + "\n")
+			if strings.EqualFold(langName, "diff") {
+				b.WriteString(renderDiff(body) + "\n")
+			} else if hl, ok := highlight(langName, body); ok {
+				b.WriteString(codePad().Render(gutterize(hl)) + "\n")
 			} else {
-				b.WriteString(codeStyle().Render(strings.TrimRight(body, "\n")) + "\n")
+				b.WriteString(codeStyle().Render(gutterize(strings.TrimRight(body, "\n"))) + "\n")
 			}
 		} else if strings.TrimSpace(sg.text) != "" {
 			b.WriteString(renderTextSegment(sg.text) + "\n")

@@ -5,52 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
+	"strings"
 )
-
-type WriteTool struct{ Workdir string }
-
-func (WriteTool) Name() string { return "write" }
-func (WriteTool) Description() string {
-	return "Create or overwrite a file. Args: path (required), content (required). Creates parent dirs."
-}
-func (WriteTool) Schema() string {
-	return `{"type":"object","required":["path","content"],"properties":{"path":{"type":"string"},"content":{"type":"string"}}}`
-}
-
-func (t *WriteTool) Run(ctx context.Context, args json.RawMessage) (string, error) {
-	var a struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-	}
-	if err := decodeArgs(args, &a); err != nil {
-		return "", err
-	}
-	if IsReadOnly(ctx) {
-		return "", fmt.Errorf("write is blocked in read-only mode")
-	}
-	if a.Path == "" {
-		return "", fmt.Errorf("path is required")
-	}
-	p := resolve(t.Workdir, a.Path)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return "", err
-	}
-	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, []byte(a.Content), 0o644); err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, p); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("wrote %s (%d bytes)", p, len(a.Content)), nil
-}
 
 type EditTool struct{ Workdir string }
 
 func (EditTool) Name() string { return "edit" }
 func (EditTool) Description() string {
-	return "Exact string replacement in a file. Args: path (required), old_string (required, must match exactly once), new_string (required)."
+	return "Surgical string replacement in a file (preferred over write for changes). Args: path (required), old_string (required, must match exactly once — anchor a small unique block, never the whole file), new_string (required)."
 }
 func (EditTool) Schema() string {
 	return `{"type":"object","required":["path","old_string","new_string"],"properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"}}}`
@@ -74,6 +36,9 @@ func (t *EditTool) Run(ctx context.Context, args json.RawMessage) (string, error
 		return "", err
 	}
 	s := string(data)
+	if len(data) > 0 && float64(len(a.OldString))/float64(len(data)) > 0.8 {
+		return "", fmt.Errorf("old_string covers >80%% of %s — anchor a smaller unique block instead of rewriting the file", p)
+	}
 	n := countOccurrences(s, a.OldString)
 	if n == 0 {
 		return "", fmt.Errorf("old_string not found in %s", p)
@@ -85,14 +50,9 @@ func (t *EditTool) Run(ctx context.Context, args json.RawMessage) (string, error
 	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("edited %s", p), nil
-}
-
-func resolve(workdir, p string) string {
-	if filepath.IsAbs(p) || workdir == "" {
-		return p
-	}
-	return filepath.Join(workdir, p)
+	out := fmt.Sprintf("edited %s\n```diff\n%s```",
+		p, diffBlock(splitLines(a.OldString), splitLines(a.NewString), 60))
+	return strings.TrimRight(out, "\n"), nil
 }
 
 func countOccurrences(s, sub string) int {

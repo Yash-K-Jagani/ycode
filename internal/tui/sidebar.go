@@ -55,8 +55,10 @@ func (m *Model) sidebar(height int) string {
 	b.WriteString(val.Render(truncSide(m.cfg.ActiveProvider+"/"+m.cfg.ActiveModel)) + "\n")
 	sec("tokens")
 	fmt.Fprintf(&b, "%s\n", val.Render(shortTokens(m.sessPTok)+" in · "+shortTokens(m.sessCTok)+" out"))
-	sec("context")
-	b.WriteString(val.Render(ctxBar(m.lastCtx, m.lastCtxB)) + "\n")
+	if !cost.Free(m.cfg.ActiveProvider) {
+		sec("context")
+		b.WriteString(val.Render(ctxBar(m.lastCtx, m.lastCtxB)) + "\n")
+	}
 	sec("spent")
 	_, _, today := m.tracker.Today()
 	spend := fmt.Sprintf("$%.4f sess · $%.4f today", m.sessUSD, today)

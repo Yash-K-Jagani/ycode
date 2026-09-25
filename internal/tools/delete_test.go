@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "deleted gone.txt" {
+	if !strings.HasPrefix(out, "deleted gone.txt") || !strings.Contains(out, "- gone.txt") {
 		t.Fatalf("%q", out)
 	}
 	if _, err := os.Stat(f); !os.IsNotExist(err) {

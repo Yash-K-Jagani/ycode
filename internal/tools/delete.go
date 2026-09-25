@@ -28,24 +28,33 @@ func (t *DeleteTool) Run(ctx context.Context, args json.RawMessage) (string, err
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
+	out, err := removePath(ctx, t.Workdir, a.Path, a.Recursive, a.Force)
+	if err != nil {
+		return "", err
+	}
+	return out + fmt.Sprintf("\n```diff\n- %s\n```", a.Path), nil
+}
+
+// removePath implements the shared delete/remove rails.
+func removePath(ctx context.Context, workdir, rawPath string, recursive, force bool) (string, error) {
 	if IsReadOnly(ctx) {
 		return "", fmt.Errorf("delete is blocked in read-only mode")
 	}
-	if strings.TrimSpace(a.Path) == "" {
+	if strings.TrimSpace(rawPath) == "" {
 		return "", fmt.Errorf("path required")
 	}
-	p := resolve(t.Workdir, a.Path)
+	p := resolve(workdir, rawPath)
 	clean := filepath.Clean(p)
-	if t.Workdir != "" {
-		wd, err := filepath.Abs(t.Workdir)
+	if workdir != "" {
+		wd, err := filepath.Abs(workdir)
 		if err == nil {
 			rel, err := filepath.Rel(wd, clean)
 			if err != nil || rel == "." {
 				return "", fmt.Errorf("refusing to delete the workdir itself")
 			}
 			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				if !a.Force {
-					return "", fmt.Errorf("refusing path outside workdir (use force:true to override): %s", a.Path)
+				if !force {
+					return "", fmt.Errorf("refusing path outside workdir (use force:true to override): %s", rawPath)
 				}
 			}
 		}
@@ -57,13 +66,13 @@ func (t *DeleteTool) Run(ctx context.Context, args json.RawMessage) (string, err
 	}
 	fi, err := os.Stat(clean)
 	if err != nil {
-		return "", fmt.Errorf("not found: %s", a.Path)
+		return "", fmt.Errorf("not found: %s", rawPath)
 	}
-	if fi.IsDir() && !a.Recursive {
-		return "", fmt.Errorf("is a directory (use recursive:true): %s", a.Path)
+	if fi.IsDir() && !recursive {
+		return "", fmt.Errorf("is a directory (use recursive:true): %s", rawPath)
 	}
 	if err := os.RemoveAll(clean); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("deleted %s", a.Path), nil
+	return fmt.Sprintf("deleted %s", rawPath), nil
 }

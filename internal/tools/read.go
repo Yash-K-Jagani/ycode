@@ -81,18 +81,3 @@ func (ReadTool) Run(_ context.Context, args json.RawMessage) (string, error) {
 	}
 	return out, nil
 }
-
-func splitLines(s string) []string {
-	var out []string
-	cur := ""
-	for _, r := range s {
-		if r == '\n' {
-			out = append(out, cur)
-			cur = ""
-		} else {
-			cur += string(r)
-		}
-	}
-	out = append(out, cur)
-	return out
-}

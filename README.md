@@ -192,13 +192,12 @@ On primary failure, configured cloud providers are retried as fallbacks
 
 ## 9. Agent tools
 
-Build mode tools (plan gets the read-only subset): `read` `write` `edit`
+Build mode tools (plan gets the read-only subset): `read` `write` `create` `add` `edit` `remove`
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`
-`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `delete` (guarded) `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) — plus dynamic `mcp__*` and `plugin__*` tools.
-Chat code blocks get Chroma syntax highlighting; prompts carry the detected
-project language.
+`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `delete` (guarded) `summary` `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) `models` (gguf) — plus dynamic `mcp__*` and `plugin__*` tools.
+Chat code blocks get Chroma syntax highlighting with line numbers; write/edit results show red/green diffs. File reads/writes show path cards; shell commands their own tint.
 
 Models emit `<tool:name>{json}</tool:name>` (tolerant parser, schema-error
 retries, repeat-guard with cached results, 8-round cap). Small local models

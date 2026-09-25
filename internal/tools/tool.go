@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 )
 
 func isWindows() bool { return runtime.GOOS == "windows" }
@@ -59,7 +62,11 @@ func DefaultRegistry(workdir string) *Registry {
 	r.Add(&GrepTool{})
 	r.Add(&GlobTool{})
 	r.Add(&WriteTool{Workdir: workdir})
+	r.Add(&CreateTool{Workdir: workdir})
+	r.Add(&AddTool{Workdir: workdir})
 	r.Add(&EditTool{Workdir: workdir})
+	r.Add(&RemoveTool{Workdir: workdir})
+	r.Add(&SummaryTool{})
 	r.Add(NewBashTool(workdir))
 	r.Add(&GitTool{Workdir: workdir})
 	r.Add(&GitHubTool{Workdir: workdir})
@@ -86,4 +93,100 @@ func decodeArgs(raw json.RawMessage, v any) error {
 		return fmt.Errorf("missing args")
 	}
 	return json.Unmarshal(raw, v)
+}
+
+// --- shared helpers (one copy used by all file tools) ---
+
+func resolve(workdir, p string) string {
+	if filepath.IsAbs(p) || workdir == "" {
+		return p
+	}
+	return filepath.Join(workdir, p)
+}
+
+func splitLines(s string) []string {
+	var out []string
+	cur := ""
+	for _, r := range s {
+		if r == '\n' {
+			out = append(out, cur)
+			cur = ""
+		} else {
+			cur += string(r)
+		}
+	}
+	out = append(out, cur)
+	return out
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
+}
+
+type fileEntry string
+
+func (f fileEntry) Name() string               { return filepath.Base(string(f)) }
+func (f fileEntry) IsDir() bool                { return false }
+func (f fileEntry) Type() os.FileMode          { return 0 }
+func (f fileEntry) Info() (os.FileInfo, error) { return os.Stat(string(f)) }
+
+// diffBlock renders old→new line diffs (changed lines only + hunk headers),
+// capped at maxLines. Used inside ```diff fences by the chat renderer.
+func diffBlock(oldLines, newLines []string, maxLines int) string {
+	type op struct {
+		kind byte // '-', '+'
+		text string
+	}
+	// LCS table, capped to keep it cheap.
+	n, m := len(oldLines), len(newLines)
+	if n > 600 || m > 600 {
+		return fmt.Sprintf("@@ large change: %d → %d lines @@\n", n, m)
+	}
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
+	}
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if oldLines[i] == newLines[j] {
+				dp[i][j] = dp[i+1][j+1] + 1
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+	var ops []op
+	for i, j := 0, 0; i < n || j < m; {
+		switch {
+		case i < n && j < m && oldLines[i] == newLines[j]:
+			i++
+			j++
+		case j < m && (i >= n || dp[i][j+1] >= dp[i+1][j]):
+			ops = append(ops, op{'+', newLines[j]})
+			j++
+		default:
+			ops = append(ops, op{'-', oldLines[i]})
+			i++
+		}
+	}
+	if len(ops) == 0 {
+		return "(no changes)\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", n, m)
+	shown := 0
+	for _, o := range ops {
+		if shown >= maxLines {
+			fmt.Fprintf(&b, "… (%d more changed lines)\n", len(ops)-shown)
+			break
+		}
+		b.WriteString(string(o.kind) + " " + o.text + "\n")
+		shown++
+	}
+	return b.String()
 }

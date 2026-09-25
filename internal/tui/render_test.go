@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -90,5 +91,54 @@ func TestWriteOpPath(t *testing.T) {
 	}
 	if writeOpPath(`{"content":"x"}`) != "" {
 		t.Fatal("missing path should give empty")
+	}
+}
+
+func TestRenderDiff(t *testing.T) {
+	out := renderAssistant("```diff\n@@ -1,2 +1,2 @@\n- old\n+ new\n keep?\n```")
+	if strings.Contains(out, "```") {
+		t.Fatalf("fences should be consumed:\n%s", out)
+	}
+	for _, want := range []string{"- old", "+ new", "@@"} {
+		if !strings.Contains(stripANSI(out), want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	// gutter must not leak into diff blocks (hunk headers carry numbers)
+	for _, ln := range strings.Split(stripANSI(out), "\n") {
+		if strings.Contains(ln, "│") {
+			t.Fatalf("diff should have no gutter: %q", ln)
+		}
+	}
+}
+
+func TestGutter(t *testing.T) {
+	got := gutterize("a\nb\nc")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("%q", got)
+	}
+	for i, ln := range lines {
+		want := fmt.Sprintf("%d │ ", i+1)
+		if !strings.Contains(stripANSI(ln), want) {
+			t.Fatalf("line %d missing gutter %q: %q", i, want, ln)
+		}
+	}
+	got = gutterize("x")
+	if !strings.Contains(stripANSI(got), "1 │ x") {
+		t.Fatalf("single: %q", got)
+	}
+}
+
+func TestExtractDiff(t *testing.T) {
+	res := "wrote f (3 bytes)\n```diff\n@@ -1,1 +1,1 @@\n- a\n+ b\n```"
+	if got := extractDiff(res); !strings.Contains(got, "- a") || !strings.Contains(got, "+ b") {
+		t.Fatalf("%q", got)
+	}
+	if extractDiff("no diff here") != "" {
+		t.Fatal("expected empty")
+	}
+	if got := extractDiff("x\n```diff\n- a"); !strings.Contains(got, "- a") {
+		t.Fatalf("unclosed: %q", got)
 	}
 }

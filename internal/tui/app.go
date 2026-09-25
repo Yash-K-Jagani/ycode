@@ -142,6 +142,15 @@ type fileOpMsg struct {
 	op     string
 	path   string
 	detail string
+	diff   string
+	ok     bool
+}
+
+// cmdOpMsg renders a command execution on its own tinted background.
+type cmdOpMsg struct {
+	tool   string
+	cmd    string
+	detail string
 	ok     bool
 }
 type resetStreamMsg struct{}
@@ -297,7 +306,23 @@ func (m *Model) appendFileCard(f fileOpMsg) {
 		path = "(unknown file)"
 	}
 	head := fileCardHead(f.ok).Render(fmt.Sprintf("%s %s %s", mark, f.op, path))
-	body := fileCardStyle().Render(f.detail)
+	card := head + "\n" + fileCardStyle().Render(f.detail)
+	if f.diff != "" {
+		card += "\n" + renderDiff(f.diff)
+	}
+	m.msgs = append(m.msgs, card)
+	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+	m.vp.GotoBottom()
+}
+
+// appendCmdCard renders a command execution on its own tinted background.
+func (m *Model) appendCmdCard(c cmdOpMsg) {
+	mark := "✓"
+	if !c.ok {
+		mark = "✗"
+	}
+	head := cmdCardHead(c.ok).Render(fmt.Sprintf("%s %s", mark, c.tool))
+	body := cmdCardStyle().Render(c.cmd + "\n" + c.detail)
 	m.msgs = append(m.msgs, head+"\n"+body)
 	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 	m.vp.GotoBottom()
@@ -675,8 +700,9 @@ func (m *Model) submit() tea.Cmd {
 			if prog == nil {
 				return
 			}
-			if name == "write" || name == "edit" {
-				prog.Send(fileOpMsg{op: name, path: writeOpPath(args), detail: status, ok: err == nil})
+			switch name {
+			case "write", "edit", "create", "add", "remove", "read":
+				prog.Send(fileOpMsg{op: name, path: writeOpPath(args), detail: status, diff: extractDiff(result), ok: err == nil})
 				return
 			}
 			prog.Send(toolMsg(fmt.Sprintf("🔧 %s %s → %s", name, truncateArgs(args), status)))
@@ -920,6 +946,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.appendFileCard(msg)
+		return m, nil
+	case cmdOpMsg:
+		if m.cancelled {
+			return m, nil
+		}
+		m.appendCmdCard(msg)
 		return m, nil
 	case resetStreamMsg:
 		m.stream.Reset()

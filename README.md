@@ -53,13 +53,21 @@ and refactor code through a real agent tool loop.
 
 ## 2. Download & install
 
-**Option A — install script (once a GitHub release exists):**
+**Option A — install script (recommended):**
 
 ```sh
 # Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/Yash-K-Jagani/ycode/main/scripts/install.sh | bash
 # Windows PowerShell
 irm https://raw.githubusercontent.com/Yash-K-Jagani/ycode/main/scripts/install.ps1 | iex
+```
+
+Both scripts download the release archive **and its `checksums.txt`**, verify
+the SHA256, and refuse to install on mismatch. Pin a version or change the
+destination with env vars:
+
+```sh
+YCODE_VERSION=v0.11.0 BIN_DIR=/usr/local/bin ./scripts/install.sh
 ```
 
 **Option B — go install (adds the `ycode` command):**
@@ -74,11 +82,41 @@ go install github.com/Yash-K-Jagani/ycode/cmd/ycode@latest
 ```sh
 git clone https://github.com/Yash-K-Jagani/ycode.git
 cd ycode
-go build -o ycode ./cmd/ycode     # ./ycode.exe on Windows
-go install ./cmd/ycode            # install as the `ycode` command
+./scripts/build.sh              # injects version/commit/date from git
+go build -o ycode ./cmd/ycode    # plain build, reports 0.0.0-dev
+go install ./cmd/ycode           # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.11.0`.
+Verify: `ycode version` → `ycode 0.11.0 (commit abc1234, built 2026-09-25…, linux/amd64)`.
+`ycode --version` prints the same thing.
+
+---
+
+## 2b. Setup
+
+The first time you run `ycode`, it runs a short setup wizard — pick a provider,
+supply a key if the provider is cloud-hosted, then choose a model. Run it again
+any time with `ycode setup`.
+
+API keys are read with the terminal in raw mode, so they are not echoed to the
+screen or captured in scrollback, and are stored in your **OS keyring** rather
+than in `config.yaml`.
+
+Non-interactive contexts (CI, pipes, editor task runners) skip the wizard and
+print the exact commands to run instead, so nothing ever blocks on a prompt:
+
+```
+$ ycode            # in a pipeline
+ycode is not configured yet. Non-interactive session detected.
+Fix it with one of:
+  ollama pull qwen2.5-coder:7b        # then: ycode config set model <name>
+  set GEMINI_API_KEY=<your key>       # or: ycode config set GEMINI_API_KEY <key>
+  ycode setup                         # interactive wizard
+```
+
+If Ollama is running but has no models, the wizard offers to pull a
+recommended coding model for you. If it cannot reach Ollama at all, it tells
+you to run `ollama serve` and retries the probe.
 
 ---
 
@@ -159,9 +197,14 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 ## 7. CLI reference
 
 ```
-ycode                    # TUI in current directory
+ycode                    # TUI in current directory (runs setup on first use)
+ycode setup              # re-run the provider/key/model wizard
+ycode config             # print current config (secrets shown as set/unset)
+ycode config get <key>   # print one value
+ycode config set <key> <value>   # write one value; keys go to the OS keyring
 ycode status             # provider health, models, cost today
-ycode version
+ycode version            # version + commit + date + os/arch
+ycode doctor [--fix]     # environment self-check
 ycode run "task" [--mode build|plan|chat] [--agent builder]
 ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
 ycode batch add|list|run|clear        # offline job queue
@@ -170,6 +213,11 @@ ycode ci [--post]                   # diff review + tests, --post comments on th
 ycode daemon                          # interval automations → queue → run
 ycode audit [--date YYYY-MM-DD|list]  # decrypted local audit log
 ```
+
+Config keys: `active_provider`, `active_model`, `ollama_host`, `theme`,
+`zero_data_leak`, `gemini_api_key`, `openrouter_api_key`, `groq_api_key`.
+The three `*_api_key` values are written to the **OS keyring**, not to
+`config.yaml`, so `ycode config` output is safe to paste into an issue.
 
 API: `GET /healthz`, `GET /v1/models`, `GET /v1/status`, `POST /v1/chat`
 `{prompt, mode?, agent?, workdir?}`. Go SDK: `pkg/ycodeclient`

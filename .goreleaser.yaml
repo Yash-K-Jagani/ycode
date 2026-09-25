@@ -11,9 +11,11 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w
-      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Version={{.Version}}
-      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Commit={{.FullCommit}}
-      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Date={{.Date}}
+      # Version lives in package main, so the linker symbol is main.Version —
+      # the full import path silently does nothing.
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.FullCommit}}
+      - -X main.Date={{.Date}}
 archives:
   - formats: [tar.gz]
     format_overrides:

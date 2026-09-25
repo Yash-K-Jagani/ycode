@@ -47,7 +47,7 @@ func main() {
 	root := &cobra.Command{Use: "ycode", Short: "AI coding harness (M6: hardened + ecosystem)"}
 	root.Version = Version
 	root.SetVersionTemplate("ycode {{.Version}}\n")
-	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd(), setupCmd())
+	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd(), setupCmd(), configCmd())
 	if len(os.Args) > 1 {
 		_ = root.Execute()
 		return
@@ -104,14 +104,19 @@ func onboard(cfg *config.Config) bool {
 		fmt.Println()
 		fmt.Println("Fix it with one of:")
 		if state.NeedsModel {
-			fmt.Printf("  ollama pull qwen2.5-coder:7b        # then: ycode config set model <name>\n")
+			fmt.Println("  ollama pull qwen2.5-coder:7b")
+			fmt.Println("  ycode config set active_model qwen2.5-coder:7b")
 		}
 		if state.NeedsKey {
-			fmt.Printf("  set %s=<your key>                 # or: ycode config set %s <key>\n", state.KeyEnv, state.KeyEnv)
+			if k := configKeyForEnv(state.KeyEnv); k != "" {
+				fmt.Printf("  ycode config set %s <your key>   # stored in your OS keyring\n", k)
+			} else {
+				fmt.Printf("  set %s=<your key>\n", state.KeyEnv)
+			}
 		}
 		fmt.Println("  ycode setup                        # interactive wizard")
 		fmt.Println()
-		fmt.Println("See https://github.com/Yash-K-Jagani/ycode#setup")
+		fmt.Println("See https://github.com/Yash-K-Jagani/ycode#2b-setup")
 		return false
 	}
 
@@ -362,6 +367,185 @@ func promptSecret(label string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line), true
+}
+
+// configCmd exposes config.yaml for scripts and non-interactive setup, so
+// users are not forced through the wizard just to pin a model.
+func configCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "config",
+		Short: "Read and write ycode configuration",
+		Run:   func(cmd *cobra.Command, args []string) { printConfig() },
+	}
+	c.AddCommand(configGetCmd(), configSetCmd())
+	return c
+}
+
+func printConfig() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Println("config error:", err)
+		return
+	}
+	for _, kv := range configPairs(cfg) {
+		fmt.Printf("%s = %s\n", kv[0], kv[1])
+	}
+}
+
+func configGetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <key>",
+		Short: "Print one config value",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Println("config error:", err)
+				return
+			}
+			for _, kv := range configPairs(cfg) {
+				if kv[0] == args[0] {
+					fmt.Println(kv[1])
+					return
+				}
+			}
+			fmt.Fprintf(os.Stderr, "unknown key %q (known keys: %s)\n", args[0], strings.Join(configKeys(), ", "))
+			os.Exit(1)
+		},
+	}
+}
+
+func configSetCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Write one config value",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			key, val := args[0], args[1]
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Println("config error:", err)
+				return
+			}
+			if !applyConfigValue(&cfg, key, val) {
+				fmt.Fprintf(os.Stderr, "unknown key %q (known keys: %s)\n", key, strings.Join(configKeys(), ", "))
+				os.Exit(1)
+			}
+			if err := cfg.Save(); err != nil {
+				fmt.Println("could not save config:", err)
+				os.Exit(1)
+			}
+			// Secret values belong in the keyring, never in config.yaml.
+			if isSecretConfigKey(key) {
+				if err := keys.Set(configKeyEnvFor(key), val); err != nil {
+					fmt.Fprintf(os.Stderr, "saved, but could not store in OS keyring: %v\n", err)
+					return
+				}
+				fmt.Printf("%s saved to the OS keyring.\n", key)
+				return
+			}
+			fmt.Printf("%s = %s\n", key, val)
+		},
+	}
+}
+
+// configPairs returns the config as ordered key/value pairs. Secrets are
+// reported as "set"/"unset" so `ycode config` can be pasted or logged safely.
+func configPairs(c config.Config) [][2]string {
+	secret := func(k string) string {
+		if k == "" {
+			return "unset"
+		}
+		return "set"
+	}
+	return [][2]string{
+		{"active_provider", c.ActiveProvider},
+		{"active_model", c.ActiveModel},
+		{"ollama_host", c.OllamaHost},
+		{"theme", c.Theme},
+		{"zero_data_leak", strconv.FormatBool(c.ZeroDataLeak)},
+		{"gemini_api_key", secret(c.GeminiAPIKey)},
+		{"openrouter_api_key", secret(c.OpenRouterKey)},
+		{"groq_api_key", secret(c.GroqKey)},
+	}
+}
+
+func configKeys() []string {
+	var out []string
+	for _, kv := range configPairs(config.Defaults()) {
+		out = append(out, kv[0])
+	}
+	return out
+}
+
+// isSecretConfigKey reports whether a config key holds a credential, which must
+// be routed to the OS keyring instead of written into config.yaml.
+func isSecretConfigKey(key string) bool {
+	switch key {
+	case "gemini_api_key", "openrouter_api_key", "groq_api_key":
+		return true
+	}
+	return false
+}
+
+// configKeyEnvFor maps a secret config key to the env var name used for both
+// the process environment and the keyring account.
+func configKeyEnvFor(key string) string {
+	switch key {
+	case "gemini_api_key":
+		return config.Defaults().GeminiKeyEnv
+	case "openrouter_api_key":
+		return config.Defaults().OpenRouterKeyEnv
+	case "groq_api_key":
+		return config.Defaults().GroqKeyEnv
+	}
+	return key
+}
+
+// configKeyForEnv is the inverse of configKeyEnvFor, so onboarding can tell the
+// user the exact `ycode config set` invocation to run.
+func configKeyForEnv(env string) string {
+	d := config.Defaults()
+	switch env {
+	case d.GeminiKeyEnv:
+		return "gemini_api_key"
+	case d.OpenRouterKeyEnv:
+		return "openrouter_api_key"
+	case d.GroqKeyEnv:
+		return "groq_api_key"
+	}
+	return ""
+}
+
+// applyConfigValue writes val into the named config field, reporting whether
+// the key was recognised.
+func applyConfigValue(c *config.Config, key, val string) bool {
+	switch key {
+	case "active_provider":
+		c.ActiveProvider = val
+	case "active_model":
+		c.ActiveModel = val
+	case "ollama_host":
+		c.OllamaHost = val
+	case "theme":
+		c.Theme = val
+	case "zero_data_leak":
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "zero_data_leak expects true or false, got %q\n", val)
+			return true // recognised, just invalid; do not claim "unknown key"
+		}
+		c.ZeroDataLeak = b
+	case "gemini_api_key":
+		c.GeminiAPIKey = val
+	case "openrouter_api_key":
+		c.OpenRouterKey = val
+	case "groq_api_key":
+		c.GroqKey = val
+	default:
+		return false
+	}
+	return true
 }
 
 // setupCmd re-runs the onboarding wizard at any time.

@@ -626,6 +626,7 @@ func (m *Model) submit() tea.Cmd {
 	turnCtx, turnCancel := context.WithCancel(context.Background())
 	m.turnCancel = turnCancel
 	m.cancelled = false
+	turnStart := time.Now()
 	return func() tea.Msg {
 		ctx := turnCtx
 		if mode == modes.Plan {
@@ -637,6 +638,7 @@ func (m *Model) submit() tea.Cmd {
 		}
 		toolCalls := 0
 		toolOK := 0
+		var acted []fileAct
 		written := 0
 		toolBytes := 0
 		w := progWriter{send: func(s string) {
@@ -649,6 +651,12 @@ func (m *Model) submit() tea.Cmd {
 			toolCalls++
 			if err == nil {
 				toolOK++
+				switch name {
+				case "write", "create", "add", "edit", "remove", "delete":
+					if p := writeOpPath(args); p != "" {
+						acted = append(acted, fileAct{op: name, path: p})
+					}
+				}
 			}
 			toolBytes += len(result)
 			status := fmt.Sprintf("ok (%d bytes)", len(result))
@@ -829,6 +837,31 @@ func (m *Model) submit() tea.Cmd {
 				}
 				if toolOK == 0 && fileTaskRe.MatchString(userText) {
 					notes = append(notes, noSuccessNote())
+				}
+				// Outcome verification: check acted file ops against disk.
+				// One bounded verify-retry with concrete facts, then report
+				// honestly either way.
+				if fails := verifyOps(workdir, acted, turnStart); len(fails) > 0 {
+					if prog != nil {
+						prog.Send(sysMsg("↳ verifying on disk… mismatch, one more try…"))
+					}
+					vCallsBefore := turnCalls
+					vRFMsgs := append(append([]apitypes.Message(nil), msgs...),
+						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
+						apitypes.Message{Role: apitypes.RoleSystem, Content: verifyFact(fails)})
+					res3, err3 := agent.Run(ctx, cand.p, cand.model, vRFMsgs, reg, allowed, hookset, w, onTool)
+					turnCalls += res3.Calls
+					if turnCalls > vCallsBefore && (err3 == nil || res3.Text != "") {
+						answer = res3.Text
+						notes = append(notes, "retried after verification")
+					}
+					if fails := verifyOps(workdir, acted, turnStart); len(fails) > 0 {
+						notes = append(notes, "unverified: "+strings.Join(fails, "; "))
+					} else {
+						notes = append(notes, fmt.Sprintf("verified: %d file op(s)", len(acted)))
+					}
+				} else if len(acted) > 0 {
+					notes = append(notes, fmt.Sprintf("verified: %d file op(s)", len(acted)))
 				}
 				done = true
 				break

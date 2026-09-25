@@ -68,6 +68,56 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
+// SetupState describes whether the current config can actually serve a chat
+// turn, so the first-run experience can guide the user instead of silently
+// failing on the first message.
+type SetupState struct {
+	// Ready is true when a provider is selected, a model is chosen, and any
+	// required API key is present.
+	Ready bool
+	// Reason is a short human-readable explanation when Ready is false.
+	Reason string
+	// NeedsKey is true when the active provider is a cloud provider whose
+	// API key has not been supplied.
+	NeedsKey bool
+	// NeedsModel is true when no model has been selected yet.
+	NeedsModel bool
+	// KeyEnv names the environment variable holding the missing key.
+	KeyEnv string
+}
+
+// SetupNeeded reports whether onboarding is still required for this config.
+func SetupNeeded(c Config) SetupState {
+	if c.ActiveModel == "" {
+		return SetupState{
+			Reason:     "no model selected",
+			NeedsModel: true,
+		}
+	}
+	switch c.ActiveProvider {
+	case "gemini":
+		if c.GeminiAPIKey == "" {
+			return SetupState{Reason: "Gemini API key not set", NeedsKey: true, KeyEnv: c.GeminiKeyEnv}
+		}
+	case "openrouter":
+		if c.OpenRouterKey == "" {
+			return SetupState{Reason: "OpenRouter API key not set", NeedsKey: true, KeyEnv: c.OpenRouterKeyEnv}
+		}
+	case "groq":
+		if c.GroqKey == "" {
+			return SetupState{Reason: "Groq API key not set", NeedsKey: true, KeyEnv: c.GroqKeyEnv}
+		}
+	case "ollama":
+		// Local provider needs no key; the model may still not be pulled,
+		// which the caller detects by probing the daemon.
+	default:
+		// An unrecognised provider cannot be repaired by supplying a key, so
+		// leave NeedsKey false and let the caller re-run the provider picker.
+		return SetupState{Reason: "unknown provider " + c.ActiveProvider}
+	}
+	return SetupState{Ready: true}
+}
+
 func keyringGet(account string) string {
 	if account == "" {
 		return ""

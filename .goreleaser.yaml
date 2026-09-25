@@ -11,8 +11,14 @@ builds:
     goarch: [amd64, arm64]
     ldflags:
       - -s -w
+      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Version={{.Version}}
+      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Commit={{.FullCommit}}
+      - -X github.com/Yash-K-Jagani/ycode/cmd/ycode.Date={{.Date}}
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE

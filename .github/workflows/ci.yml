@@ -3,31 +3,65 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+permissions:
+  contents: read
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        go: ["1.26", "1.27"]
+        # Must satisfy the `go` directive in go.mod. A matrix entry lower than
+        # the go.mod directive can never build, so keep these in lockstep.
+        go: ["1.27.x"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
-      - run: go vet ./...
-      - run: go test ./...
+          cache: true
       - run: go build ./...
+      - run: go vet ./...
+      - run: go test -short ./...
+  race:
+    # Data-race detection is only reliable on linux; keep it out of the
+    # OS matrix so the 3-way build matrix stays fast.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - run: go test -short -race -p 2 ./...
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27"
+          go-version: "1.27.x"
+          cache: true
       - uses: golangci/golangci-lint-action@v7
         with:
           version: v2.13.2
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      # `gofmt -l ./...` walks .git on some shells; scope it to source dirs.
+      - run: gofmt -l cmd internal pkg store
+      - name: Fail on unformatted code
+        run: |
+          unformatted=$(gofmt -l cmd internal pkg store)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
   review:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -37,7 +71,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27"
+          go-version: "1.27.x"
+          cache: true
       - run: go build -o ycode ./cmd/ycode
       - run: ./ycode ci --post
         env:

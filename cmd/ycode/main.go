@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,12 +11,16 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/Yash-K-Jagani/ycode/internal/audit"
 	"github.com/Yash-K-Jagani/ycode/internal/automation"
@@ -24,6 +29,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/headless"
+	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/plugins"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
@@ -39,7 +45,9 @@ import (
 
 func main() {
 	root := &cobra.Command{Use: "ycode", Short: "AI coding harness (M6: hardened + ecosystem)"}
-	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd())
+	root.Version = Version
+	root.SetVersionTemplate("ycode {{.Version}}\n")
+	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd(), setupCmd())
 	if len(os.Args) > 1 {
 		_ = root.Execute()
 		return
@@ -53,6 +61,11 @@ func launchTUI() {
 		fmt.Println("config error:", err)
 		os.Exit(1)
 	}
+	// First run: guide the user through provider/key/model selection rather
+	// than dropping them into a TUI whose every message will fail.
+	if !onboard(&cfg) {
+		return
+	}
 	workdir, _ := os.Getwd()
 	r := router.New(cfg)
 	_ = sessions.InitDefault()
@@ -65,6 +78,313 @@ func launchTUI() {
 	if _, err := prog.Run(); err != nil {
 		fmt.Println("tui error:", err)
 		os.Exit(1)
+	}
+}
+
+// isFirstRun reports whether ycode has never written a config file, which is
+// the cue to run the full onboarding wizard instead of a quick repair.
+func isFirstRun() bool {
+	_, err := os.Stat(filepath.Join(config.Dir(), "config.yaml"))
+	return os.IsNotExist(err)
+}
+
+// onboard ensures cfg has a usable provider/model. It returns false if the
+// user (or a non-interactive environment) declined to continue, in which case
+// the caller should exit without launching the TUI.
+func onboard(cfg *config.Config) bool {
+	state := config.SetupNeeded(*cfg)
+	if state.Ready {
+		return true
+	}
+
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		// Non-interactive (CI, pipes, editor task runners). Print actionable
+		// instructions and exit rather than blocking on a prompt forever.
+		fmt.Println("ycode is not configured yet. Non-interactive session detected.")
+		fmt.Println()
+		fmt.Println("Fix it with one of:")
+		if state.NeedsModel {
+			fmt.Printf("  ollama pull qwen2.5-coder:7b        # then: ycode config set model <name>\n")
+		}
+		if state.NeedsKey {
+			fmt.Printf("  set %s=<your key>                 # or: ycode config set %s <key>\n", state.KeyEnv, state.KeyEnv)
+		}
+		fmt.Println("  ycode setup                        # interactive wizard")
+		fmt.Println()
+		fmt.Println("See https://github.com/Yash-K-Jagani/ycode#setup")
+		return false
+	}
+
+	if isFirstRun() {
+		return runSetupWizard(cfg)
+	}
+	return runSetupRepair(cfg, state)
+}
+
+// runSetupWizard is the first-run experience: pick a provider, supply a key if
+// the provider is cloud-hosted, then choose a model.
+func runSetupWizard(cfg *config.Config) bool {
+	fmt.Println()
+	fmt.Println("  ycode " + Version + " — welcome!")
+	fmt.Println()
+	fmt.Println("  Let's get you set up. This takes about a minute.")
+	fmt.Println()
+
+	providers := []struct {
+		id, label, keyEnv string
+		needsKey          bool
+	}{
+		{"ollama", "Ollama (local, free, private — recommended)", "", false},
+		{"gemini", "Google Gemini (fast, generous free tier)", cfg.GeminiKeyEnv, true},
+		{"openrouter", "OpenRouter (many models, pay per token)", cfg.OpenRouterKeyEnv, true},
+		{"groq", "Groq (very fast, free tier)", cfg.GroqKeyEnv, true},
+	}
+	for i, p := range providers {
+		fmt.Printf("    %d) %s\n", i+1, p.label)
+	}
+	fmt.Println()
+	idx, ok := promptInt("provider", 1, 1, len(providers))
+	if !ok {
+		return false
+	}
+	p := providers[idx-1]
+	cfg.ActiveProvider = p.id
+
+	if p.needsKey {
+		fmt.Printf("\n  %s API key (input hidden; leave empty to set it later with YCODE=%s)\n", p.id, p.keyEnv)
+		key, ok := promptSecret(p.id + " key")
+		if !ok {
+			return false
+		}
+		if key == "" {
+			fmt.Printf("\n  No key entered. Set %s in your environment, or run 'ycode setup' again.\n", p.keyEnv)
+			return false
+		}
+		if err := os.Setenv(p.keyEnv, key); err != nil {
+			fmt.Println("could not set env var:", err)
+			return false
+		}
+		// Persist to the OS keyring so later runs find it without the env var.
+		if err := keys.Set(p.keyEnv, key); err != nil {
+			fmt.Println("note: could not store key in OS keyring; set", p.keyEnv, "in your environment instead")
+		}
+		switch p.id {
+		case "gemini":
+			cfg.GeminiAPIKey = key
+		case "openrouter":
+			cfg.OpenRouterKey = key
+		case "groq":
+			cfg.GroqKey = key
+		}
+	}
+
+	fmt.Println()
+	model, ok := chooseModel(p.id, cfg)
+	if !ok {
+		return false
+	}
+	cfg.ActiveModel = model
+
+	if err := cfg.Save(); err != nil {
+		fmt.Println("could not save config:", err)
+		return false
+	}
+	fmt.Printf("\n  Saved. You're set up — launching ycode.\n\n")
+	return true
+}
+
+// runSetupRepair fixes a config that exists but is incomplete.
+func runSetupRepair(cfg *config.Config, state config.SetupState) bool {
+	fmt.Println()
+	fmt.Println("  ycode needs a little more setup before it can chat.")
+	fmt.Printf("  Problem: %s\n", state.Reason)
+	fmt.Println()
+	if state.NeedsModel {
+		model, ok := chooseModel(cfg.ActiveProvider, cfg)
+		if !ok {
+			return false
+		}
+		cfg.ActiveModel = model
+	}
+	if state.NeedsKey && state.KeyEnv != "" {
+		fmt.Printf("\n  %s is required for the %s provider.\n", state.KeyEnv, cfg.ActiveProvider)
+		fmt.Println("  You can set it later in your environment, or enter it now.")
+		key, ok := promptSecret(state.KeyEnv)
+		if !ok {
+			return false
+		}
+		if key == "" {
+			fmt.Printf("\n  Set %s and re-run ycode.\n", state.KeyEnv)
+			return false
+		}
+		if err := os.Setenv(state.KeyEnv, key); err != nil {
+			fmt.Println("could not set env var:", err)
+			return false
+		}
+		_ = keys.Set(state.KeyEnv, key)
+		cfg.GeminiAPIKey, cfg.OpenRouterKey, cfg.GroqKey = key, key, key
+	}
+	// Still unready after the targeted repairs (e.g. an unrecognised
+	// provider): fall back to the full wizard so the user can pick again.
+	if s := config.SetupNeeded(*cfg); !s.Ready {
+		fmt.Printf("\n  Still not ready: %s\n", s.Reason)
+		fmt.Println("  Starting the full setup wizard instead.")
+		return runSetupWizard(cfg)
+	}
+	if err := cfg.Save(); err != nil {
+		fmt.Println("could not save config:", err)
+		return false
+	}
+	fmt.Printf("\n  Saved. Launching ycode.\n\n")
+	return true
+}
+
+// chooseModel lists candidate models for the provider and prompts for one. For
+// Ollama it offers to pull a recommended model when the daemon is reachable but
+// empty.
+func chooseModel(provider string, cfg *config.Config) (string, bool) {
+	const timeout = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	var models []string
+	if provider == "ollama" {
+		list, err := ollama.New(cfg.OllamaHost).ListModels(ctx)
+		if err != nil {
+			fmt.Printf("  Could not reach Ollama at %s.\n", cfg.OllamaHost)
+			fmt.Println("  Start it with: ollama serve")
+			fmt.Println("  Then pull a model: ollama pull qwen2.5-coder:7b")
+			return "", false
+		}
+		for _, m := range list {
+			models = append(models, m.ID)
+		}
+	}
+	if len(models) == 0 {
+		if provider != "ollama" {
+			fmt.Println("  Enter the model id to use (or leave empty to let the provider decide).")
+			m, ok := promptLine("model")
+			if !ok || m == "" {
+				return "", false
+			}
+			return m, true
+		}
+		// Ollama reachable but no models installed.
+		recommended := "qwen2.5-coder:7b"
+		fmt.Println("  Ollama is running but has no models installed.")
+		fmt.Printf("  Recommended for coding: %s (needs ~5 GB)\n", recommended)
+		other, ok := promptLine("model (blank for the recommendation)")
+		if !ok {
+			return "", false
+		}
+		if other == "" {
+			other = recommended
+		}
+		fmt.Printf("  Pulling %s — this can take a while on first run...\n", other)
+		if err := pullOllamaModel(cfg.OllamaHost, other); err != nil {
+			fmt.Println("  Could not pull automatically:", err)
+			fmt.Printf("  Run this yourself: ollama pull %s\n", other)
+		} else {
+			fmt.Println("  Pulled.")
+		}
+		return other, true
+	}
+
+	fmt.Println("  Available models:")
+	for i, m := range models {
+		fmt.Printf("    %d) %s\n", i+1, m)
+	}
+	fmt.Println()
+	idx, ok := promptInt("model", 1, 1, len(models))
+	if !ok {
+		return "", false
+	}
+	return models[idx-1], true
+}
+
+// pullOllamaModel shells out to the ollama CLI to fetch a model.
+func pullOllamaModel(host, model string) error {
+	cmd := exec.Command("ollama", "pull", model)
+	cmd.Env = append(os.Environ(), "OLLAMA_HOST="+host)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// promptInt asks for a number within [min,max], re-prompting on bad input.
+func promptInt(label string, def, min, max int) (int, bool) {
+	for {
+		s, ok := promptLine(fmt.Sprintf("%s [%d-%d, default %d]", label, min, max, def))
+		if !ok {
+			return 0, false
+		}
+		if s == "" {
+			return def, true
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil || n < min || n > max {
+			fmt.Printf("  Please enter a number between %d and %d.\n", min, max)
+			continue
+		}
+		return n, true
+	}
+}
+
+// promptLine reads one line. Returns ok=false on EOF/interrupt.
+func promptLine(label string) (string, bool) {
+	fmt.Printf("  %s: ", label)
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	if err != nil && line == "" {
+		fmt.Println()
+		return "", false
+	}
+	return strings.TrimSpace(line), true
+}
+
+// promptSecret reads a line without echoing it, so API keys do not land in
+// scrollback or terminal logs.
+func promptSecret(label string) (string, bool) {
+	fmt.Printf("  %s: ", label)
+	fd := int(os.Stdin.Fd())
+	// Switch the terminal to raw mode so the key is never echoed to the
+	// screen or captured in scrollback, then restore it afterwards.
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		// Fall back to a normal read if the terminal cannot be switched.
+		return promptLine(label)
+	}
+	defer func() { _ = term.Restore(fd, oldState) }()
+	r := bufio.NewReader(os.Stdin)
+	line, err := r.ReadString('\n')
+	fmt.Println()
+	if err != nil && line == "" {
+		return "", false
+	}
+	return strings.TrimSpace(line), true
+}
+
+// setupCmd re-runs the onboarding wizard at any time.
+func setupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup",
+		Short: "Interactive provider/key/model setup",
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Println("config error:", err)
+				return
+			}
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				fmt.Println("setup needs an interactive terminal; set YCODE_* env vars and run 'ycode status' instead.")
+				return
+			}
+			if !runSetupWizard(&cfg) {
+				fmt.Println("setup cancelled.")
+				return
+			}
+			fmt.Println("Run 'ycode' to start.")
+		},
 	}
 }
 
@@ -511,14 +831,29 @@ func doctorCmd() *cobra.Command {
 	return c
 }
 
-var Version = "0.11.0"
+var (
+	// Version is the release version. Overridden at build time via ldflags
+	// (see .goreleaser.yaml and scripts/build.sh). The default is the
+	// "unreleased source tree" sentinel so it is obvious when a binary was
+	// not built by the release pipeline.
+	Version = "0.0.0-dev"
+	// Commit is the git commit sha, injected at build time.
+	Commit = "unknown"
+	// Date is the build date, injected at build time.
+	Date = "unknown"
+)
+
+// buildInfo returns a single-line build fingerprint for version output.
+func buildInfo() string {
+	return fmt.Sprintf("ycode %s (commit %s, built %s, %s/%s)", Version, Commit, Date, runtime.GOOS, runtime.GOARCH)
+}
 
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("ycode", Version)
+			fmt.Println(buildInfo())
 		},
 	}
 }

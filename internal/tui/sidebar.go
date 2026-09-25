@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Yash-K-Jagani/ycode/internal/batch"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
@@ -86,6 +87,19 @@ func (m *Model) sidebar(height int) string {
 			fmt.Fprintf(&b, "%s\n", st.Render(mark+" "+truncSide(fmt.Sprintf("%d. %s", t.ID, t.Text))))
 			n++
 		}
+	}
+	sec("queue")
+	q := batch.Load().List()
+	pending := 0
+	for _, j := range q {
+		if j.Status == "queued" {
+			pending++
+		}
+	}
+	if pending == 0 {
+		b.WriteString(dim.Render("no queued jobs") + "\n")
+	} else {
+		b.WriteString(val.Render(fmt.Sprintf("%d queued", pending)) + "\n")
 	}
 	body := b.String()
 	lines := strings.Count(body, "\n")

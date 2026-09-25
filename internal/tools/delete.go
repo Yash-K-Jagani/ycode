@@ -71,6 +71,11 @@ func removePath(ctx context.Context, workdir, rawPath string, recursive, force b
 	if fi.IsDir() && !recursive {
 		return "", fmt.Errorf("is a directory (use recursive:true): %s", rawPath)
 	}
+	if !fi.IsDir() {
+		if data, err := os.ReadFile(clean); err == nil {
+			backupFile(workdir, clean, data)
+		}
+	}
 	if err := os.RemoveAll(clean); err != nil {
 		return "", err
 	}

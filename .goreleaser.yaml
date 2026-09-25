@@ -69,19 +69,41 @@ homebrew_casks:
 scoops:
   - repository:
       owner: Yash-K-Jagani
-      name: ycode
+      # Cannot be "ycode": that name is already taken by the main repo on the
+      # same owner. See docs/distribution.md.
+      name: ycode-scoop
     description: Terminal-first AI coding harness with a local-first agent loop
     homepage: https://github.com/Yash-K-Jagani/ycode
     license: MIT
+    # Manifests go in the repo root on purpose: scoop bucket list reports 0
+    # manifests when they are nested in a subdirectory.
+    directory: ""
 
 winget:
   - repository:
-      owner: Yash-K-Jagani
-      name: ycode
-    description: Terminal-first AI coding harness with a local-first agent loop
-    homepage: https://github.com/Yash-K-Jagani/ycode
-    license: MIT
+      owner: microsoft
+      name: winget-pkgs
+      pull_request:
+        enabled: true
+        # winget-pkgs rejects direct pushes; every manifest lands as a PR.
+        draft: true
+    # PackageIdentifier defaults to <publisher>.<name>, i.e. Yash-K-Jagani.ycode.
+    # NOTE: the publisher must already be registered in winget-pkgs, otherwise
+    # the PR is rejected. See docs/distribution.md.
     publisher: Yash-K-Jagani
+    publisher_url: https://github.com/Yash-K-Jagani
+    publisher_support_url: https://github.com/Yash-K-Jagani/ycode/issues
+    license: MIT
+    license_url: https://github.com/Yash-K-Jagani/ycode/blob/main/LICENSE
+    homepage: https://github.com/Yash-K-Jagani/ycode
+    # winget-pkgs CI enforces hard length limits: 80 and 101 characters.
+    # scripts/test-manifest-limits.sh guards these.
+    short_description: Terminal-first AI coding harness with a local-first agent loop
+    description: Single-binary terminal coding assistant with a real agent tool loop.
+    tags:
+      - cli
+      - ai
+      - terminal
 
 snapshot:
   version_template: "{{ .Version }}-next"

@@ -73,10 +73,14 @@ YCODE_VERSION=v0.12.1 BIN_DIR=/usr/local/bin ./scripts/install.sh
 **Option B — package managers:**
 
 ```sh
-brew install --cask ycode                                    # macOS
-scoop install ycode                                          # Windows
-winget install Yash-K-Jagani.ycode                           # Windows
+brew tap Yash-K-Jagani/ycode && brew install --cask ycode   # macOS
+scoop bucket add ycode https://github.com/Yash-K-Jagani/ycode-scoop
+scoop install ycode                                         # Windows
+winget install Yash-K-Jagani.ycode                          # Windows
 ```
+
+See [docs/distribution.md](docs/distribution.md) for the state of each channel
+and what it takes to enable the package managers.
 
 **Option C — go install (adds the `ycode` command):**
 

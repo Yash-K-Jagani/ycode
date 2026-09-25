@@ -40,6 +40,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/store"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/internal/tui"
+	"github.com/Yash-K-Jagani/ycode/internal/upgrade"
 	"github.com/Yash-K-Jagani/ycode/internal/webhooks"
 )
 
@@ -47,7 +48,7 @@ func main() {
 	root := &cobra.Command{Use: "ycode", Short: "AI coding harness (M6: hardened + ecosystem)"}
 	root.Version = Version
 	root.SetVersionTemplate("ycode {{.Version}}\n")
-	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd(), setupCmd(), configCmd())
+	root.AddCommand(statusCmd(), runCmd(), serveCmd(), batchCmd(), ciCmd(), daemonCmd(), auditCmd(), versionCmd(), storeCmd(), doctorCmd(), setupCmd(), configCmd(), upgradeCmd())
 	if len(os.Args) > 1 {
 		_ = root.Execute()
 		return
@@ -367,6 +368,69 @@ func promptSecret(label string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(line), true
+}
+
+// upgradeCmd reports the latest published release and, with --apply, replaces
+// the running binary after verifying the published SHA256.
+func upgradeCmd() *cobra.Command {
+	var apply bool
+	var repo string
+	c := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Check for a newer ycode release",
+		Run:   func(cmd *cobra.Command, args []string) { runUpgrade(apply, repo) },
+	}
+	c.Flags().BoolVar(&apply, "apply", false, "download, verify, and install the newer release")
+	c.Flags().StringVar(&repo, "repo", upgrade.DefaultRepo, "GitHub repo to check")
+	return c
+}
+
+func runUpgrade(apply bool, repo string) {
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Println("cannot locate the running binary:", err)
+		os.Exit(1)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	fmt.Println("checking", repo, "for a newer release...")
+	rel, err := upgrade.Latest(ctx, repo)
+	if err != nil {
+		fmt.Println("upgrade check failed:", err)
+		os.Exit(1)
+	}
+
+	current := Version
+	if !upgrade.CleanVersion(current) {
+		// A local `go build` or `go install` copy. Say so rather than
+		// comparing a dev sentinel against real releases.
+		fmt.Printf("running ycode %s (local build, not a tagged release)\n", current)
+		fmt.Println("latest published release:", rel.TagName)
+		fmt.Println("re-run 'ycode upgrade --apply' to switch to the release build.")
+	} else if !upgrade.IsNewer(rel.TagName, current) {
+		fmt.Printf("ycode %s is up to date (%s)\n", current, rel.TagName)
+		return
+	} else {
+		fmt.Printf("update available: %s -> %s\n", current, rel.TagName)
+	}
+	fmt.Println("release notes:", rel.HTMLURL)
+
+	if !apply {
+		fmt.Println("\nrun 'ycode upgrade --apply' to install it")
+		return
+	}
+
+	// The running executable is locked for overwrite on Windows, so install
+	// beside it and rename. Refuse if we lack permission rather than half-write.
+	res, err := upgrade.Apply(ctx, rel, current, self)
+	if err != nil {
+		fmt.Println("upgrade failed:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\ninstalled %s (sha256 verified)\n", res.To)
+	fmt.Println("previous binary kept as", res.Backup)
+	fmt.Println("restart ycode to use it: ycode version")
 }
 
 // configCmd exposes config.yaml for scripts and non-interactive setup, so

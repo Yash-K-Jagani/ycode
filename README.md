@@ -70,14 +70,22 @@ destination with env vars:
 YCODE_VERSION=v0.12.1 BIN_DIR=/usr/local/bin ./scripts/install.sh
 ```
 
-**Option B — go install (adds the `ycode` command):**
+**Option B — package managers:**
+
+```sh
+brew install --cask ycode                                    # macOS
+scoop install ycode                                          # Windows
+winget install Yash-K-Jagani.ycode                           # Windows
+```
+
+**Option C — go install (adds the `ycode` command):**
 
 ```sh
 go install github.com/Yash-K-Jagani/ycode/cmd/ycode@latest
 # ensure $(go env GOPATH)/bin is on PATH
 ```
 
-**Option C — build from source:**
+**Option D — build from source:**
 
 ```sh
 git clone https://github.com/Yash-K-Jagani/ycode.git
@@ -89,6 +97,12 @@ go install ./cmd/ycode           # install as the `ycode` command
 
 Verify: `ycode version` → `ycode 0.12.1 (commit abc1234, built 2026-09-25…, linux/amd64)`.
 `ycode --version` prints the same thing.
+
+**Upgrading:** `ycode upgrade` checks GitHub for a newer release, and
+`ycode upgrade --apply` downloads it, verifies the published SHA256, and
+replaces the running binary. On Windows the current executable is locked
+against overwrite, so it is renamed to `ycode.exe.old` and cleaned up on the
+next successful upgrade.
 
 ---
 
@@ -202,6 +216,7 @@ ycode setup              # re-run the provider/key/model wizard
 ycode config             # print current config (secrets shown as set/unset)
 ycode config get <key>   # print one value
 ycode config set <key> <value>   # write one value; keys go to the OS keyring
+ycode upgrade [--apply]          # check for / install a newer release
 ycode status             # provider health, models, cost today
 ycode version            # version + commit + date + os/arch
 ycode doctor [--fix]     # environment self-check
@@ -371,8 +386,31 @@ Conventions: small focused packages, table-less unit tests per package,
   Version, commit, and build date are injected via `-X main.*` ldflags, so
   `ycode version` reports the real release. Tag to release:
   `git tag v0.12.1 && git push origin v0.12.1`.
+- **Supply chain:** `checksums.txt` is signed keylessly with
+  [Sigstore/cosign](https://docs.sigstore.dev/) over the release workflow's
+  OIDC identity, so anyone can verify provenance without trusting a checked-in
+  key:
+
+  ```sh
+  cosign verify-blob \
+    --certificate checksums.txt.pem \
+    --signature checksums.txt.sig \
+    https://github.com/Yash-K-Jagani/ycode/releases/download/v0.12.1/checksums.txt
+  ```
+
+  Installers and `ycode upgrade` both verify the SHA256; the signature is what
+  establishes that the checksum came from this repo's pipeline.
+- **Package managers:** `homebrew_casks` (with a quarantine-stripping hook,
+  since the binaries are unsigned), `scoops`, and `winget` publish a manifest
+  per release. These pipes are skipped automatically when the corresponding
+  `HOMEBREW_TOKEN` / `SCOOP_TOKEN` / `WINGET_TOKEN` secret is absent, so a
+  missing tap never breaks a release.
 - `.github/workflows/ci.yml`: build matrix (Go × OS) + a linux-only `-race`
   job + `go vet`/`go test` + gofmt + golangci-lint + `ycode ci` review on PRs.
+- `.github/workflows/release.yml`: goreleaser + cosign installer + the
+  optional-pipe resolution above.
+- `scripts/test-skip-logic.sh` covers the shell in `release.yml` that decides
+  which publish pipes to skip; run it with `bash`.
 
 ---
 

@@ -4,6 +4,9 @@ on:
     tags: ["v*"]
 permissions:
   contents: write
+  # Required for cosign keyless (Sigstore) signing, which authenticates the
+  # release pipeline via OIDC rather than a long-lived private key.
+  id-token: write
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -14,10 +17,42 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27.x"
-      - uses: goreleaser/goreleaser-action@v6
+          cache: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Resolve optional package-manager publishes
+        id: pipes
+        env:
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}
+          SCOOP_TOKEN: ${{ secrets.SCOOP_TOKEN }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          # A missing tap token must not fail the whole release. The archives,
+          # checksums, and signature are the important artifacts; package
+          # managers are a convenience that can catch up later.
+          skip=""
+          [ -n "$HOMEBREW_TOKEN" ] || skip="${skip:+$skip,}homebrew_casks"
+          [ -n "$SCOOP_TOKEN" ]    || skip="${skip:+$skip,}scoops"
+          [ -n "$WINGET_TOKEN" ]   || skip="${skip:+$skip,}winget"
+          skip="${skip#,}"
+          # `--skip=` with an empty value is rejected by goreleaser, so only
+          # pass the flag when there is something to skip.
+          if [ -n "$skip" ]; then
+            echo "args=release --clean --skip=$skip" >> "$GITHUB_OUTPUT"
+            echo "package-manager pipes skipped: $skip"
+          else
+            echo "args=release --clean" >> "$GITHUB_OUTPUT"
+            echo "all publish pipes enabled"
+          fi
+
+      - name: Publish release
+        uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: ${{ steps.pipes.outputs.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TOKEN: ${{ secrets.HOMEBREW_TOKEN }}

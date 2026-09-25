@@ -27,6 +27,61 @@ archives:
       - README.md
 checksum:
   name_template: checksums.txt
+
+# Keyless Sigstore signing of the checksum manifest. A checksum proves the
+# download matches the release; the signature proves the checksum was produced
+# by this repo's release pipeline. Both are needed to trust a binary.
+signs:
+  - artifacts: checksum
+    cmd: cosign
+    certificate: "${signature}.pem"
+    signature: "${signature}.sig"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "--yes"
+      - "${artifact}"
+
+# Package managers. A cask (not a formula) is the correct shape here: these are
+# pre-compiled, unsigned binaries, and Homebrew formulae are intended for
+# source builds. `brews` still works but is soft-deprecated.
+homebrew_casks:
+  - repository:
+      owner: Yash-K-Jagani
+      name: homebrew-ycode
+      token: "{{ .Env.HOMEBREW_TOKEN }}"
+    name: ycode
+    description: Terminal-first AI coding harness with a local-first agent loop
+    homepage: https://github.com/Yash-K-Jagani/ycode
+    binaries:
+      - ycode
+    hooks:
+      post:
+        # ycode is not codesigned or notarized, so Gatekeeper quarantines the
+        # downloaded binary. Strip the attribute or every run prompts the user.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/ycode"]
+          end
+
+scoops:
+  - repository:
+      owner: Yash-K-Jagani
+      name: ycode
+    description: Terminal-first AI coding harness with a local-first agent loop
+    homepage: https://github.com/Yash-K-Jagani/ycode
+    license: MIT
+
+winget:
+  - repository:
+      owner: Yash-K-Jagani
+      name: ycode
+    description: Terminal-first AI coding harness with a local-first agent loop
+    homepage: https://github.com/Yash-K-Jagani/ycode
+    license: MIT
+    publisher: Yash-K-Jagani
+
 snapshot:
   version_template: "{{ .Version }}-next"
 changelog:

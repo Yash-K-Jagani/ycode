@@ -85,6 +85,10 @@ type Model struct {
 	conn       *connectFlow
 	winW, winH int
 
+	modelsModal   *modelsModal
+	sessionsModal *sessionsModal
+	storeModal    *storeModal
+
 	watchCancel context.CancelFunc
 	watchTarget string
 
@@ -912,6 +916,74 @@ func truncateArgs(s string) string {
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// modals take precedence (centered fuzzy pickers)
+	if m.modelsModal != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.modelsModal = nil
+				return m, nil
+			case "enter":
+				if len(m.modelsModal.filtered) > 0 {
+					e := m.modelsModal.filtered[m.modelsModal.sel]
+					m.appendSys(applyModel(m, e.Provider, e.Model))
+				}
+				m.modelsModal = nil
+				return m, nil
+			}
+		}
+		m.modelsModal.update(msg)
+		return m, nil
+	}
+	if m.sessionsModal != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.sessionsModal = nil
+				return m, nil
+			case "enter":
+				if len(m.sessionsModal.filtered) > 0 {
+					s := m.sessionsModal.filtered[m.sessionsModal.sel]
+					m.sess = &s
+					if s.Provider != "" {
+						m.cfg.ActiveProvider = s.Provider
+					}
+					if s.Model != "" {
+						m.cfg.ActiveModel = s.Model
+					}
+					m.router.Update(m.cfg)
+					_ = m.cfg.Save()
+					m.renderAll()
+					m.appendSys("Resumed " + s.Title)
+				}
+				m.sessionsModal = nil
+				return m, nil
+			}
+		}
+		m.sessionsModal.update(msg)
+		return m, nil
+	}
+	if m.storeModal != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.storeModal = nil
+				return m, nil
+			case "enter":
+				if len(m.storeModal.filtered) > 0 {
+					e := m.storeModal.filtered[m.storeModal.sel]
+					m.appendSys(fmt.Sprintf("Installing %s (%s) …", e.Name, e.Kind))
+					cmd := m.storeInstallCmd(e)
+					m.storeModal = nil
+					return m, cmd
+				}
+				m.storeModal = nil
+				return m, nil
+			}
+		}
+		m.storeModal.update(msg)
+		return m, nil
+	}
 	if m.conn != nil {
 		if _, ok := msg.(tea.KeyMsg); ok {
 			cmd := m.updateConnect(msg)
@@ -1311,6 +1383,36 @@ func (m Model) View() string {
 	base := out + input + "\n" + status
 	if t := m.renderToasts(); t != "" {
 		base = t + "\n" + base
+	}
+	if m.modelsModal != nil {
+		w, h := m.winW, m.winH
+		if w <= 0 {
+			w = 80
+		}
+		if h <= 0 {
+			h = 24
+		}
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, m.modelsModal.view(w-8, m.th.Accent))
+	}
+	if m.sessionsModal != nil {
+		w, h := m.winW, m.winH
+		if w <= 0 {
+			w = 80
+		}
+		if h <= 0 {
+			h = 24
+		}
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, m.sessionsModal.view(w-8, m.th.Accent))
+	}
+	if m.storeModal != nil {
+		w, h := m.winW, m.winH
+		if w <= 0 {
+			w = 80
+		}
+		if h <= 0 {
+			h = 24
+		}
+		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, m.storeModal.view(w-8, m.th.Accent))
 	}
 	if m.conn != nil {
 		w, h := m.winW, m.winH

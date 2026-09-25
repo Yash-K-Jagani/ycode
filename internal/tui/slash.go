@@ -290,15 +290,8 @@ func slashRegistry() map[string]slashHandler {
 			if err != nil || len(list) == 0 {
 				return "No saved sessions.", nil
 			}
-			var b strings.Builder
-			for i, s := range list {
-				if i >= 10 {
-					break
-				}
-				fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
-			}
-			b.WriteString("Use: /sessions <id> to resume, /sessions fork <id>, /sessions search <q>, /sessions prune [N] [--yes]")
-			return b.String(), nil
+			m.sessionsModal = newSessionsModal(list)
+			return "", textinput.Blink
 		},
 		"/export": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			md := sessions.Export(m.sess)
@@ -338,7 +331,8 @@ func slashRegistry() map[string]slashHandler {
 			}
 			entries, note := listEntries(ctx, m)
 			if args == "" {
-				return modelsHelp(m, entries, note) + "\n/models install <ollama-model> — one-click install\n/models import <file.gguf> [name] — register local GGUF\n/models info <file.gguf> — inspect\n/models <file.gguf> — shorthand import", nil
+				m.modelsModal = newModelsModal(entries, note)
+				return "", textinput.Blink
 			}
 			return selectModel(m, entries, args), nil
 		},
@@ -727,7 +721,8 @@ func slashRegistry() map[string]slashHandler {
 				if err != nil {
 					return "store: " + err.Error() + " — run /store update first", nil
 				}
-				return storeList(idx.Search("")), nil
+				m.storeModal = newStoreModal(idx.Search(""))
+				return "", textinput.Blink
 			}
 			switch f[0] {
 			case "update":

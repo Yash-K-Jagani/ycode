@@ -193,3 +193,20 @@ func mustHash(t *testing.T, dir string) string {
 	}
 	return h
 }
+
+func TestDirHashLineEndings(t *testing.T) {
+	mk := func(content string) string {
+		d := t.TempDir()
+		_ = os.WriteFile(filepath.Join(d, "f.md"), []byte(content), 0o644)
+		return d
+	}
+	lf := mustHash(t, mk("a\nb\n"))
+	crlf := mustHash(t, mk("a\r\nb\r\n"))
+	if lf != crlf {
+		t.Fatalf("LF vs CRLF differ:\n%s\n%s", lf, crlf)
+	}
+	cr := mustHash(t, mk("a\rb\r"))
+	if cr != lf {
+		t.Fatal("lone CR should canonicalize too")
+	}
+}

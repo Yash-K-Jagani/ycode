@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,7 +29,9 @@ type record struct {
 
 const recordFile = ".store.json"
 
-// dirHash hashes a directory tree deterministically (sorted rel paths + contents).
+// dirHash hashes a directory tree deterministically (sorted rel paths +
+// contents). Line endings are canonicalized (CRLF/CR → LF) so hashes match
+// across platforms regardless of git autocrlf checkout normalization.
 func dirHash(dir string) (string, error) {
 	var files []string
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
@@ -59,10 +62,30 @@ func dirHash(dir string) (string, error) {
 			return "", err
 		}
 		h.Write([]byte(rel + "\x00"))
-		h.Write(data)
+		h.Write(canonical(data))
 		h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// canonical maps CRLF and lone CR to LF so identical checkouts hash
+// identically on every OS.
+func canonical(b []byte) []byte {
+	if bytes.IndexByte(b, '\r') < 0 {
+		return b
+	}
+	out := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\r' {
+			if i+1 < len(b) && b[i+1] == '\n' {
+				continue
+			}
+			out = append(out, '\n')
+			continue
+		}
+		out = append(out, b[i])
+	}
+	return out
 }
 
 func writeRecord(dir string, e Entry, sum string) error {

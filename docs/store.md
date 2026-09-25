@@ -32,6 +32,8 @@ Index entries:
 - Integrity: index entries may pin `sha256:` (tree hash); mismatches abort
   the install and clean up. Every install writes `.store.json` provenance;
   `verify` recomputes hashes (`ok`, `CHANGED`, or `no record`).
+  Hashing canonicalizes line endings (CRLF/CR → LF) so identical checkouts
+  verify on every OS regardless of git autocrlf settings.
 - Trust: entries are installed on your explicit request only; sources are
   shown before fetching. Signatures are a future step — review
   a source before installing it.

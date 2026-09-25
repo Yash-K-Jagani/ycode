@@ -850,6 +850,8 @@ func (m *Model) submit() tea.Cmd {
 					retryNudge = "You did not call any tool. Redo this turn properly: emit ONLY a call shaped exactly like <tool:delete>{\"path\": \"FILE\"}</tool:delete> (add \"recursive\": true for directories) — no prose claims."
 				case toolOK == 0 && fileTaskRe.MatchString(userText) && claimsCompletion(answer):
 					retryNudge = "You claimed completion without calling any tool — nothing executed. Redo this turn properly: emit ONLY the <tool:> call(s) that do the work, no claims, no prose."
+				case toolOK == 0 && fileTaskRe.MatchString(userText) && delegatesToUser(answer):
+					retryNudge = "You told the user to do the work themselves instead of acting. Redo this turn properly: YOU do it — emit ONLY the <tool:> call(s), no instructions to the user."
 				}
 				if retryNudge != "" {
 					if prog != nil {

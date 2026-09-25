@@ -871,6 +871,11 @@ var claimRe = regexp.MustCompile(`(?i)\b(done|deleted|created|wrote|finished|com
 
 func claimsCompletion(s string) bool { return claimRe.MatchString(s) }
 
+// delegateRe matches DIY-delegation: telling the user to do the work.
+var delegateRe = regexp.MustCompile(`(?i)\b(you can (run|check|do|try|look)|you should (run|check|do|try)|do it yourself|run .* yourself|check .* yourself|try running|as an ai\b|i can['’]t (access|run|execute))`)
+
+func delegatesToUser(s string) bool { return delegateRe.MatchString(s) }
+
 // shellCmdRe matches a lone shell command line (the bare-command dodge).
 var shellCmdRe = regexp.MustCompile("^(rm|del|touch)\\s+([^\\s&|;`$()]+)\\s*$")
 

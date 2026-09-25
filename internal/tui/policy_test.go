@@ -41,6 +41,29 @@ func TestLooksLikeWriteTask(t *testing.T) {
 	}
 }
 
+func TestDelegatesToUser(t *testing.T) {
+	for _, s := range []string{
+		"you can run the tests yourself",
+		"You should check the files yourself",
+		"do it yourself please",
+		"try running npm test",
+		"as an AI, I can't access files",
+	} {
+		if !delegatesToUser(s) {
+			t.Fatalf("miss: %q", s)
+		}
+	}
+	for _, s := range []string{
+		"here is the summary",
+		"the file contains X",
+		"done",
+	} {
+		if delegatesToUser(s) {
+			t.Fatalf("false positive: %q", s)
+		}
+	}
+}
+
 func TestShellToCalls(t *testing.T) {
 	rm := shellToCalls("rm index.html", "delete index.html")
 	if len(rm) != 1 || rm[0].Name != "delete" || !strings.Contains(string(rm[0].Args), "index.html") {

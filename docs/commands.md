@@ -5,7 +5,7 @@
 | `/help` | This list |
 | `/exit` | Quit (state saved) |
 | `/new` | Fresh session |
-| `/models` | Numbered model list; `/models <n>`, `/models <provider> <model>`, `/models install <ollama-model>` |
+| `/models` | Numbered model list; `/models <n>`, `/models <provider> <model>`, `/models install <ollama-model>`, `/models <file.gguf>` / `/models import <file.gguf>` |
 | `/model` | Alias of `/models` |
 | `/export [file]` | Save transcript as markdown |
 | `/tools` | List tools available in the current mode |

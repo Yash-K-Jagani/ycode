@@ -58,6 +58,7 @@ func (t *EditTool) Run(ctx context.Context, args json.RawMessage) (string, error
 		return "", fmt.Errorf("old_string matches %d times in %s - be more specific%s", n, p, suggestLines(s, a.OldString))
 	}
 	s = replaceOnce(s, actual, a.NewString)
+	backupFile(t.Workdir, p, data)
 	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
 		return "", err
 	}

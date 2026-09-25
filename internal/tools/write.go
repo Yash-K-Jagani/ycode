@@ -37,6 +37,7 @@ func (t *WriteTool) Run(ctx context.Context, args json.RawMessage) (string, erro
 	var old []string
 	if data, err := os.ReadFile(p); err == nil {
 		old = splitLines(string(data))
+		backupFile(t.Workdir, p, data)
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", err

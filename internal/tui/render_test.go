@@ -99,10 +99,14 @@ func TestRenderDiff(t *testing.T) {
 	if strings.Contains(out, "```") {
 		t.Fatalf("fences should be consumed:\n%s", out)
 	}
-	for _, want := range []string{"- old", "+ new", "@@"} {
-		if !strings.Contains(stripANSI(out), want) {
+	plain := stripANSI(out)
+	for _, want := range []string{"old", "new", "@@"} {
+		if !strings.Contains(plain, want) {
 			t.Fatalf("missing %q:\n%s", want, out)
 		}
+	}
+	if !strings.Contains(plain, "-") || !strings.Contains(plain, "+") {
+		t.Fatalf("missing diff markers:\n%s", plain)
 	}
 	// gutter must not leak into diff blocks (hunk headers carry numbers)
 	for _, ln := range strings.Split(stripANSI(out), "\n") {

@@ -10,6 +10,7 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/sergi/go-diff/diffmatchpatch"
 
 	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 )
@@ -103,16 +104,53 @@ func gutterize(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderDiff colors unified-diff lines: red bg for removals, green bg for
-// additions, dim for hunk headers. No gutter (headers carry real numbers).
+func delIntraStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(lipgloss.Color("#5A1A1A")).Foreground(lipgloss.Color("#FF9999")).Underline(true).Bold(true)
+}
+
+func addIntraStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(lipgloss.Color("#1A4A1A")).Foreground(lipgloss.Color("#99FF99")).Underline(true).Bold(true)
+}
+
+// renderDiff colors unified-diff lines with intra-line highlights for paired -/+.
 func renderDiff(body string) string {
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	var out []string
-	for _, ln := range strings.Split(strings.TrimRight(body, "\n"), "\n") {
+	dmp := diffmatchpatch.New()
+	for i := 0; i < len(lines); i++ {
+		ln := lines[i]
 		switch {
 		case strings.HasPrefix(ln, "+++"), strings.HasPrefix(ln, "---"):
 			out = append(out, chipStyle().Render(ln))
 		case strings.HasPrefix(ln, "@@"):
 			out = append(out, chipStyle().Render(ln))
+		case strings.HasPrefix(ln, "-") && i+1 < len(lines) && strings.HasPrefix(lines[i+1], "+"):
+			// paired deletion/addition -> intra-line
+			oldT := ln[1:]
+			newT := lines[i+1][1:]
+			if len(oldT) < 500 && len(newT) < 500 && (strings.Contains(oldT, " ") || strings.Contains(newT, " ")) {
+				diffs := dmp.DiffMain(oldT, newT, false)
+				dmp.DiffCleanupSemantic(diffs)
+				var oldB, newB strings.Builder
+				oldB.WriteString("- ")
+				newB.WriteString("+ ")
+				for _, d := range diffs {
+					switch d.Type {
+					case diffmatchpatch.DiffEqual:
+						oldB.WriteString(delLineStyle().Render(d.Text))
+						newB.WriteString(addLineStyle().Render(d.Text))
+					case diffmatchpatch.DiffDelete:
+						oldB.WriteString(delIntraStyle().Render(d.Text))
+					case diffmatchpatch.DiffInsert:
+						newB.WriteString(addIntraStyle().Render(d.Text))
+					}
+				}
+				out = append(out, oldB.String())
+				out = append(out, newB.String())
+				i++ // consume next line
+			} else {
+				out = append(out, delLineStyle().Render(ln))
+			}
 		case strings.HasPrefix(ln, "+"):
 			out = append(out, addLineStyle().Render(ln))
 		case strings.HasPrefix(ln, "-"):

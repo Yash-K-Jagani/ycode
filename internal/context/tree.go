@@ -1,10 +1,23 @@
 package ctx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
+)
+
+type treeEntry struct {
+	at  time.Time
+	val string
+}
+
+var (
+	treeMu    sync.Mutex
+	treeCache = map[string]treeEntry{}
 )
 
 var treeSkipDirs = map[string]bool{
@@ -13,7 +26,7 @@ var treeSkipDirs = map[string]bool{
 }
 
 // Tree returns a compact relative-path listing of workdir for prompt injection.
-// Capped at maxEntries entries and maxChars characters.
+// Capped at maxEntries entries and maxChars characters. Result cached 2s per workdir.
 func Tree(workdir string, maxEntries, maxChars int) string {
 	if maxEntries <= 0 {
 		maxEntries = 150
@@ -21,6 +34,14 @@ func Tree(workdir string, maxEntries, maxChars int) string {
 	if maxChars <= 0 {
 		maxChars = 4000
 	}
+	key := fmt.Sprintf("%s:%d:%d", workdir, maxEntries, maxChars)
+	treeMu.Lock()
+	if e, ok := treeCache[key]; ok && time.Since(e.at) < 2*time.Second {
+		v := e.val
+		treeMu.Unlock()
+		return v
+	}
+	treeMu.Unlock()
 	var paths []string
 	_ = filepath.WalkDir(workdir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -54,5 +75,9 @@ func Tree(workdir string, maxEntries, maxChars int) string {
 		}
 		b.WriteString(p + "\n")
 	}
-	return b.String()
+	val := b.String()
+	treeMu.Lock()
+	treeCache[key] = treeEntry{at: time.Now(), val: val}
+	treeMu.Unlock()
+	return val
 }

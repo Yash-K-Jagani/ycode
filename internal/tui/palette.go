@@ -4,8 +4,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
 type slashItem struct {
@@ -34,7 +32,6 @@ func slashList() []slashItem {
 		{"/chat", "chat mode"},
 		{"/thinking", "thinking mode"},
 		{"/tools", "list available tools"},
-		{"/permissions", "allow/deny memory"},
 		{"/review", "AI review of diff"},
 		{"/test", "run project tests"},
 		{"/refactor", "safe refactoring"},
@@ -115,26 +112,4 @@ func renderPalette(items []slashItem, selected, width int, accent lipgloss.Color
 		more = "\n" + lipgloss.NewStyle().Faint(true).Render("  …more")
 	}
 	return box.Render(b.String() + more)
-}
-
-// approvalView renders the allow/deny modal for a gated tool call.
-func approvalView(req *tools.ApprovalReq, width int, accent lipgloss.Color) string {
-	if width < 30 {
-		width = 30
-	}
-	if width > 64 {
-		width = 64
-	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Allow tool?")
-	args := req.Args
-	if len(args) > 200 {
-		args = args[:200] + "…"
-	}
-	var b strings.Builder
-	b.WriteString(title + "\n\n")
-	b.WriteString(lipgloss.NewStyle().Bold(true).Render(req.Tool) + "\n")
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render(args) + "\n\n")
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render("enter/y once · a always · s skip · d never · esc skip"))
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Width(width).Padding(0, 1)
-	return box.Render(b.String())
 }

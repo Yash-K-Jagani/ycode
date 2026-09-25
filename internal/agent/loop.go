@@ -284,9 +284,6 @@ func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, h
 	if err := json.Unmarshal([]byte(c.Args), &js); err != nil {
 		return "", fmt.Errorf("bad args for %s: must be a valid JSON object (%v). Schema: %s", c.Name, err, t.Schema())
 	}
-	if tools.NeedsApproval(c.Name, string(c.Args)) && !tools.Approved(ctx, c.Name, string(c.Args)) {
-		return "", fmt.Errorf("denied by user (approve with y/a in the prompt, or pre-allow via permissions)")
-	}
 	if hk != nil {
 		tmp, err := os.CreateTemp("", "ycode-tool-*.json")
 		if err == nil {

@@ -92,12 +92,6 @@ type Model struct {
 
 	pendingPlan string
 
-	perms           *tools.PermStore
-	approvalCh      chan *tools.ApprovalReq
-	pendingApproval *tools.ApprovalReq
-	gatePrompts     int
-	gateDenials     int
-
 	sideOn         bool
 	sessPTok       int
 	sessCTok       int
@@ -194,8 +188,6 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 		embedder: em, semCache: cache.New(em.Embed),
 		pluginLoader: plugins.NewLoader(),
 		sideOn:       true,
-		perms:        tools.NewPermStore(),
-		approvalCh:   make(chan *tools.ApprovalReq),
 	}
 	m.registerPluginTools()
 	return m
@@ -231,39 +223,7 @@ func (m *Model) registerPluginTools() {
 	m.pluginNames = kept
 }
 
-func (m *Model) SetProgram(p *tea.Program) {
-	m.prog = p
-	go m.approvalPump()
-}
-
-// approvalPump forwards gate requests to the UI thread.
-func (m *Model) approvalPump() {
-	for req := range m.approvalCh {
-		if m.prog != nil {
-			m.prog.Send(approvalReqMsg{req: req})
-		} else {
-			req.Done <- tools.AllowOnce
-		}
-	}
-}
-
-type approvalReqMsg struct{ req *tools.ApprovalReq }
-
-func (m *Model) answerApproval(v tools.Verdict, note string) {
-	req := m.pendingApproval
-	m.pendingApproval = nil
-	if req != nil {
-		if v == tools.DenyOnce || v == tools.DenyAlways {
-			m.gateDenials++
-		}
-		req.Done <- v
-		extra := ""
-		if v == tools.DenyAlways {
-			extra = " (change with /permissions clear " + req.Tool + ")"
-		}
-		m.appendSys(fmt.Sprintf("⛔ %s %s — %s%s", req.Tool, truncateArgs(req.Args), note, extra))
-	}
-}
+func (m *Model) SetProgram(p *tea.Program) { m.prog = p }
 
 func (m Model) Init() tea.Cmd { return textarea.Blink }
 
@@ -675,7 +635,6 @@ func (m *Model) submit() tea.Cmd {
 		if zdl {
 			ctx = tools.WithZeroLeak(ctx)
 		}
-		ctx = tools.WithGate(ctx, &tools.Gate{Store: m.perms, Ask: m.approvalCh})
 		toolCalls := 0
 		toolOK := 0
 		written := 0
@@ -1050,10 +1009,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mcpNames = append(m.mcpNames, msg.names...)
 		m.appendSys(fmt.Sprintf("mcp: loaded %d tools", added))
 		return m, nil
-	case approvalReqMsg:
-		m.pendingApproval = msg.req
-		m.gatePrompts++
-		return m, nil
 	case sysMsg:
 		m.appendSys(string(msg))
 		return m, nil
@@ -1075,28 +1030,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
-		if m.pendingApproval != nil {
-			switch msg.String() {
-			case "y", "Y", "enter":
-				m.answerApproval(tools.AllowOnce, "allowed once")
-			case "a", "A":
-				m.answerApproval(tools.AllowAlways, "always allowed")
-			case "s", "n", "N":
-				m.answerApproval(tools.DenyOnce, "skipped")
-			case "d", "D":
-				m.answerApproval(tools.DenyAlways, "never allowed")
-			case "esc":
-				m.answerApproval(tools.DenyOnce, "skipped")
-			case "ctrl+c", "ctrl+d":
-				m.answerApproval(tools.DenyOnce, "skipped")
-			default:
-				return m, nil
-			}
-			if msg.String() == "ctrl+c" || msg.String() == "ctrl+d" {
-				break // let the main switch handle quit-after-deny
-			}
-			return m, nil
-		}
 		if pal := m.paletteItems(); len(pal) > 0 {
 			complete := func() {
 				if m.palIdx < 0 || m.palIdx >= len(pal) {
@@ -1274,16 +1207,6 @@ func (m Model) View() string {
 	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(
 		fmt.Sprintf(" %s/%s · %d msgs · /help ", m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages))) + badge
 	base := out + input + "\n" + status
-	if m.pendingApproval != nil {
-		w, h := m.winW, m.winH
-		if w <= 0 {
-			w = 80
-		}
-		if h <= 0 {
-			h = 24
-		}
-		return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, approvalView(m.pendingApproval, w-8, m.th.Accent))
-	}
 	if m.conn != nil {
 		w, h := m.winW, m.winH
 		if w <= 0 {

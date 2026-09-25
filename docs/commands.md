@@ -9,7 +9,6 @@
 | `/model` | Alias of `/models` |
 | `/export [file]` | Save transcript as markdown |
 | `/tools` | List tools available in the current mode |
-| `/permissions [clear [tool]]` | Show/forget remembered allow/deny verdicts |
 | `/variants` | Installed Ollama variants + quant guidance |
 | `/sessions` | List; `/sessions <id>` resumes (restores its provider/model), `/sessions fork <id>` branches |
 | `/status` | Mode, tokens, cost today, cache, RAG, latency |

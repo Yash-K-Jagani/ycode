@@ -56,6 +56,7 @@ func (t *AddTool) Run(ctx context.Context, args json.RawMessage) (string, error)
 		return "", err
 	}
 	_ = f.Close()
+	_ = tryFormat(p)
 	added := splitLines(a.Content)
 	out := fmt.Sprintf("appended %d lines to %s\n```diff\n%s```", len(added), p, diffBlock(old, append(old, added...), 60))
 	return strings.TrimRight(out, "\n"), nil

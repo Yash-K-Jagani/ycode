@@ -43,6 +43,7 @@ func (t *CreateTool) Run(ctx context.Context, args json.RawMessage) (string, err
 	if err := os.WriteFile(p, []byte(a.Content), 0o644); err != nil {
 		return "", err
 	}
+	_ = tryFormat(p)
 	out := fmt.Sprintf("created %s (%d bytes)\n```diff\n%s```",
 		p, len(a.Content), diffBlock(nil, splitLines(a.Content), 60))
 	return strings.TrimRight(out, "\n"), nil

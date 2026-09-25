@@ -182,6 +182,13 @@ func slashRegistry() map[string]slashHandler {
 			}
 			return b.String(), nil
 		},
+		"/undo": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			path, err := tools.UndoLast(m.workdir)
+			if err != nil {
+				return "undo: " + err.Error(), nil
+			}
+			return "Restored " + path + " from last backup.", nil
+		},
 		"/doctor": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if strings.TrimSpace(args) == "fix" {
 				return doctorFix(m), nil

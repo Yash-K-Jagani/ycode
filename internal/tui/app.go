@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -101,6 +102,9 @@ type Model struct {
 	toolCallsTotal int
 	toolTurns      int
 	toolModeTurns  int
+
+	sp        spinner.Model
+	busySince time.Time
 }
 
 type deltaMsg string
@@ -177,6 +181,9 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 	th := theme.Dark()
 	ag, _ := agents.Get("builder")
 	em := embed.New(cfg.OllamaHost, "")
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(th.Accent)
 	m := Model{
 		cfg: cfg, router: r, sess: sess, ta: ta, vp: vp,
 		keys: DefaultKeyMap(), th: th,
@@ -188,6 +195,7 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 		embedder: em, semCache: cache.New(em.Embed),
 		pluginLoader: plugins.NewLoader(),
 		sideOn:       true,
+		sp:           sp,
 	}
 	m.registerPluginTools()
 	return m
@@ -605,7 +613,9 @@ func (m *Model) submit() tea.Cmd {
 	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 	m.vp.GotoBottom()
 	m.busy = true
+	m.busySince = time.Now()
 	m.stream.Reset()
+	spinCmd := m.sp.Tick
 	hist := append([]apitypes.Message(nil), m.sess.Messages...)
 	userText := text
 	if expanded != text {
@@ -627,7 +637,7 @@ func (m *Model) submit() tea.Cmd {
 	m.turnCancel = turnCancel
 	m.cancelled = false
 	turnStart := time.Now()
-	return func() tea.Msg {
+	turn := func() tea.Msg {
 		ctx := turnCtx
 		if mode == modes.Plan {
 			ctx = tools.WithReadOnly(ctx)
@@ -880,6 +890,7 @@ func (m *Model) submit() tea.Cmd {
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
 		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, agent: len(allowed) > 0}
 	}
+	return tea.Batch(spinCmd, turn)
 }
 
 func truncateArgs(s string) string {
@@ -906,6 +917,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.sp, cmd = m.sp.Update(msg)
+		if m.busy {
+			return m, cmd
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.winW, m.winH = msg.Width, msg.Height
 		m.vp.Width = msg.Width
@@ -1237,8 +1255,11 @@ func (m Model) View() string {
 	} else if at, _ := m.atItems(); len(at) > 0 {
 		out += renderPalette(at, m.atIdx, m.vp.Width, m.th.Accent) + "\n"
 	}
-	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(
-		fmt.Sprintf(" %s/%s · %d msgs · /help ", m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages))) + badge
+	statusText := fmt.Sprintf(" %s/%s · %d msgs · /help ", m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages))
+	if m.busy {
+		statusText += fmt.Sprintf("· %s %.1fs", m.sp.View(), time.Since(m.busySince).Seconds())
+	}
+	status := lipgloss.NewStyle().Foreground(m.th.Dim).Render(statusText) + badge
 	base := out + input + "\n" + status
 	if m.conn != nil {
 		w, h := m.winW, m.winH

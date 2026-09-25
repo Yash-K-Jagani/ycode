@@ -49,7 +49,8 @@ func (t *WriteTool) Run(ctx context.Context, args json.RawMessage) (string, erro
 	if err := os.Rename(tmp, p); err != nil {
 		return "", err
 	}
-	out := fmt.Sprintf("wrote %s (%d bytes)", p, len(a.Content))
+	note := tryFormat(p)
+	out := fmt.Sprintf("wrote %s (%d bytes)%s", p, len(a.Content), note)
 	if len(old) > 0 {
 		out += "\n```diff\n" + diffBlock(old, splitLines(a.Content), 60) + "```"
 	} else {

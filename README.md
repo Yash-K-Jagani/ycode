@@ -12,7 +12,7 @@ and refactor code through a real agent tool loop.
 - **Hackable** — skills, script plugins, MCP servers, YAML hooks, automations,
   a local HTTP API + Go SDK, and headless/CI modes.
 
-> Status: v0.12.0. Milestones M1–M6 implemented (see `plan.md`).
+> Status: v0.12.1. Milestones M1–M6 implemented (see `plan.md`).
 
 ---
 
@@ -67,7 +67,7 @@ the SHA256, and refuse to install on mismatch. Pin a version or change the
 destination with env vars:
 
 ```sh
-YCODE_VERSION=v0.12.0 BIN_DIR=/usr/local/bin ./scripts/install.sh
+YCODE_VERSION=v0.12.1 BIN_DIR=/usr/local/bin ./scripts/install.sh
 ```
 
 **Option B — go install (adds the `ycode` command):**
@@ -87,7 +87,7 @@ go build -o ycode ./cmd/ycode    # plain build, reports 0.0.0-dev
 go install ./cmd/ycode           # install as the `ycode` command
 ```
 
-Verify: `ycode version` → `ycode 0.12.0 (commit abc1234, built 2026-09-25…, linux/amd64)`.
+Verify: `ycode version` → `ycode 0.12.1 (commit abc1234, built 2026-09-25…, linux/amd64)`.
 `ycode --version` prints the same thing.
 
 ---
@@ -370,7 +370,7 @@ Conventions: small focused packages, table-less unit tests per package,
   `ycode_<os>_<arch>.zip` for windows, × amd64/arm64, plus `checksums.txt`.
   Version, commit, and build date are injected via `-X main.*` ldflags, so
   `ycode version` reports the real release. Tag to release:
-  `git tag v0.12.0 && git push origin v0.12.0`.
+  `git tag v0.12.1 && git push origin v0.12.1`.
 - `.github/workflows/ci.yml`: build matrix (Go × OS) + a linux-only `-race`
   job + `go vet`/`go test` + gofmt + golangci-lint + `ycode ci` review on PRs.
 

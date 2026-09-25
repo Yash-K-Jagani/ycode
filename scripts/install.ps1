@@ -33,10 +33,13 @@ if ($Tag -eq "latest") {
   $Base = "https://github.com/$Repo/releases/download/$Tag"
 }
 
-# goreleaser packages Windows as zip (archive format override), not tar.gz.
-$Asset = "ycode_windows_$Arch.zip"
-$Url = "$Base/$Asset"
-$SumUrl = "$Base/checksums.txt"
+# goreleaser packages Windows as zip (archive format override) from v0.12.0
+# onward; earlier releases shipped tar.gz. Try each in turn so pinning an older
+# tag with YCODE_VERSION still works. Probing with -Method Head is not an option:
+# PowerShell 5.1 does not follow the cross-host redirect that release downloads
+# issue, so every probe would report 404.
+$Stem = "ycode_windows_$Arch"
+$Candidates = @("$Stem.zip", "$Stem.tar.gz")
 
 Write-Host "ycode installer"
 Write-Host "  os/arch : windows/$Arch"
@@ -49,8 +52,25 @@ $tmp = Join-Path $env:TEMP ("ycode-" + [Guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $tmp | Out-Null
 
 try {
-  Write-Host "downloading $Url"
-  Invoke-WebRequest -Uri $Url -OutFile (Join-Path $tmp $Asset)
+  # Download the first candidate that exists.
+  $Asset = $null
+  $archive = $null
+  foreach ($c in $Candidates) {
+    $dest = Join-Path $tmp $c
+    try {
+      Write-Host "downloading $Base/$c"
+      Invoke-WebRequest -Uri "$Base/$c" -OutFile $dest -ErrorAction Stop
+      $Asset = $c
+      $archive = $dest
+      break
+    } catch {
+      Write-Host "  not available, trying the next archive format"
+    }
+  }
+  if (-not $Asset) {
+    throw "no release asset found for windows/$Arch at $Base (tried: $($Candidates -join ', ')). Check that YCODE_VERSION names a real tag."
+  }
+  $SumUrl = "$Base/checksums.txt"
 
   # Verify SHA256 against the release checksums before executing anything.
   if ($env:YCODE_SKIP_CHECKSUM -eq "1") {
@@ -72,7 +92,16 @@ try {
     Write-Host "checksum verified"
   }
 
-  Expand-Archive -Path (Join-Path $tmp $Asset) -DestinationPath $tmp -Force
+  # zip from v0.12.0 onward, tar.gz before that.
+  if ($Asset.EndsWith(".zip")) {
+    Expand-Archive -Path $archive -DestinationPath $tmp -Force
+  } else {
+    tar -xzf $archive -C $tmp
+    if ($LASTEXITCODE -ne 0) { throw "failed to extract $Asset" }
+  }
+  if (-not (Test-Path (Join-Path $tmp "ycode.exe"))) {
+    throw "ycode.exe not found inside $Asset"
+  }
   Copy-Item (Join-Path $tmp "ycode.exe") (Join-Path $BinDir "ycode.exe") -Force
 
   Write-Host ""

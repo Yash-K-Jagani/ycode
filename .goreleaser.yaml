@@ -31,17 +31,18 @@ checksum:
 # Keyless Sigstore signing of the checksum manifest. A checksum proves the
 # download matches the release; the signature proves the checksum was produced
 # by this repo's release pipeline. Both are needed to trust a binary.
+#
+# --bundle writes certificate, signature, and transparency log into one
+# .sigstore.json, which is the form cosign v3 documents.
 signs:
   - artifacts: checksum
     cmd: cosign
-    certificate: "${signature}.pem"
-    signature: "${signature}.sig"
+    signature: "${artifact}.sigstore.json"
     args:
-      - sign-blob
-      - "--output-certificate=${certificate}"
-      - "--output-signature=${signature}"
-      - "--yes"
+      - "sign-blob"
+      - "--bundle=${signature}"
       - "${artifact}"
+      - "--yes"
 
 # Package managers. A cask (not a formula) is the correct shape here: these are
 # pre-compiled, unsigned binaries, and Homebrew formulae are intended for

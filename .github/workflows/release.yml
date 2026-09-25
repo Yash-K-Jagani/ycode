@@ -32,9 +32,13 @@ jobs:
           # A missing tap token must not fail the whole release. The archives,
           # checksums, and signature are the important artifacts; package
           # managers are a convenience that can catch up later.
+          #
+          # These are goreleaser *pipe* names, not the config stanza keys
+          # (homebrew_casks / scoops). Using the stanza names makes goreleaser
+          # abort with "not allowed. Valid options for skip are [...]".
           skip=""
-          [ -n "$HOMEBREW_TOKEN" ] || skip="${skip:+$skip,}homebrew_casks"
-          [ -n "$SCOOP_TOKEN" ]    || skip="${skip:+$skip,}scoops"
+          [ -n "$HOMEBREW_TOKEN" ] || skip="${skip:+$skip,}homebrew"
+          [ -n "$SCOOP_TOKEN" ]    || skip="${skip:+$skip,}scoop"
           [ -n "$WINGET_TOKEN" ]   || skip="${skip:+$skip,}winget"
           skip="${skip#,}"
           # `--skip=` with an empty value is rejected by goreleaser, so only

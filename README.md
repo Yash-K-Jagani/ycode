@@ -389,13 +389,18 @@ Conventions: small focused packages, table-less unit tests per package,
 - **Supply chain:** `checksums.txt` is signed keylessly with
   [Sigstore/cosign](https://docs.sigstore.dev/) over the release workflow's
   OIDC identity, so anyone can verify provenance without trusting a checked-in
-  key:
+  key. Verify the signature first, then the download:
 
   ```sh
+  curl -LO https://github.com/Yash-K-Jagani/ycode/releases/download/v0.12.1/checksums.txt
+  curl -LO https://github.com/Yash-K-Jagani/ycode/releases/download/v0.12.1/checksums.txt.sigstore.json
+
   cosign verify-blob \
-    --certificate checksums.txt.pem \
-    --signature checksums.txt.sig \
-    https://github.com/Yash-K-Jagani/ycode/releases/download/v0.12.1/checksums.txt
+    --certificate-identity 'https://github.com/Yash-K-Jagani/ycode/.github/workflows/release.yml@refs/tags/v0.12.1' \
+    --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+    --bundle checksums.txt.sigstore.json checksums.txt
+
+  sha256sum --check --ignore-missing checksums.txt
   ```
 
   Installers and `ycode upgrade` both verify the SHA256; the signature is what

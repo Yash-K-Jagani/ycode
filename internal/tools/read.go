@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 const maxReadBytes = 100 * 1024
@@ -13,30 +14,60 @@ type ReadTool struct{}
 
 func (ReadTool) Name() string { return "read" }
 func (ReadTool) Description() string {
-	return "Read a file (or directory listing). Args: path (required), offset (1-based line, default 1), limit (max lines, default 2000)."
+	return "Read files (or a directory listing). Args: path (single file/dir) and/or paths (array of files, max 10). offset/limit apply per file."
 }
 func (ReadTool) Schema() string {
-	return `{"type":"object","required":["path"],"properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`
+	return `{"type":"object","properties":{"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"offset":{"type":"integer"},"limit":{"type":"integer"}}}`
 }
 
 func (ReadTool) Run(_ context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		Path   string `json:"path"`
-		Offset int    `json:"offset"`
-		Limit  int    `json:"limit"`
+		Path   string   `json:"path"`
+		Paths  []string `json:"paths"`
+		Offset int      `json:"offset"`
+		Limit  int      `json:"limit"`
 	}
 	if err := decodeArgs(args, &a); err != nil {
 		return "", err
 	}
-	if a.Path == "" {
+	paths := a.Paths
+	if a.Path != "" {
+		paths = append([]string{a.Path}, paths...)
+	}
+	if len(paths) == 0 {
+		return "", fmt.Errorf("path or paths required")
+	}
+	if len(paths) > 10 {
+		return "", fmt.Errorf("max 10 paths per call")
+	}
+	if len(paths) == 1 {
+		return readOne(paths[0], a.Offset, a.Limit)
+	}
+	var b strings.Builder
+	for _, p := range paths {
+		out, err := readOne(p, a.Offset, a.Limit)
+		if err != nil {
+			fmt.Fprintf(&b, "=== %s ===\nERROR: %v\n", p, err)
+			continue
+		}
+		fmt.Fprintf(&b, "=== %s ===\n%s", p, out)
+		if !strings.HasSuffix(out, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
+}
+
+func readOne(path string, offset, limit int) (string, error) {
+	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	fi, err := os.Stat(a.Path)
+	fi, err := os.Stat(path)
 	if err != nil {
 		return "", err
 	}
 	if fi.IsDir() {
-		entries, err := os.ReadDir(a.Path)
+		entries, err := os.ReadDir(path)
 		if err != nil {
 			return "", err
 		}
@@ -50,7 +81,7 @@ func (ReadTool) Run(_ context.Context, args json.RawMessage) (string, error) {
 		}
 		return out, nil
 	}
-	data, err := os.ReadFile(a.Path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -58,17 +89,17 @@ func (ReadTool) Run(_ context.Context, args json.RawMessage) (string, error) {
 		data = data[:maxReadBytes]
 	}
 	lines := splitLines(string(data))
-	if a.Offset <= 0 {
-		a.Offset = 1
+	if offset <= 0 {
+		offset = 1
 	}
-	if a.Limit <= 0 {
-		a.Limit = 2000
+	if limit <= 0 {
+		limit = 2000
 	}
-	start := a.Offset - 1
+	start := offset - 1
 	if start >= len(lines) {
 		return "(empty range)", nil
 	}
-	end := start + a.Limit
+	end := start + limit
 	if end > len(lines) {
 		end = len(lines)
 	}

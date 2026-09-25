@@ -33,9 +33,9 @@ func AllowedTools(m Mode, extra ...string) []string {
 	var base []string
 	switch m {
 	case Build:
-		base = []string{"read", "write", "create", "add", "edit", "remove", "summary", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "delete", "db", "notebook", "api", "vscode", "scaffold", "models"}
+		base = []string{"read", "write", "create", "add", "edit", "remove", "summary", "changes", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "delete", "db", "notebook", "api", "vscode", "scaffold", "models"}
 	case Plan:
-		base = []string{"read", "summary", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models"}
+		base = []string{"read", "summary", "changes", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models"}
 	default:
 		base = nil
 	}
@@ -56,9 +56,9 @@ func SystemPrompt(m Mode, reg *tools.Registry, workdir, model string) string {
 	}
 	switch m {
 	case Plan:
-		return base + "\nMODE: PLAN (read-only). Research with read/grep/glob/git and answer or plan." +
+		return base + "\nMODE: PLAN (read-only, planning only — never chat, never answer directly)." +
+			" Research with read/grep/glob/git, then ALWAYS output a numbered step-by-step plan and end with 'AWAITING APPROVAL'." +
 			"\nIf the request is ambiguous or missing key facts, FIRST ask up to 3 numbered clarifying questions (concise, each with your best-guess default) and stop — do not plan until the user answers." +
-			" If you propose file changes, output a numbered step-by-step plan and end with 'AWAITING APPROVAL'; for plain questions just answer directly." +
 			" Do NOT write or edit files. For history use the git tool (log/diff/show/status work in plan mode) — bash is disabled here." +
 			" Stay on task: don't repeat tool calls that already returned." + docs(AllowedTools(m))
 	case Build:
@@ -119,8 +119,10 @@ func shortRouting() string {
 }
 func routing() string {
 	return "\nWHEN TO USE EACH TOOL (pick the right one, don't default to git/bash):" +
-		"\n- find/list files: glob. read file contents: read. search code: grep." +
+		"\n- find/list files: glob. read file contents: read (paths array reads several at once). search code: grep. what changed: changes." +
 		"\n- new files: create (fails if exists). append: add. change part of a file: edit with a small unique old_string (never rewrite whole files with write). remove/delete files: remove/delete." +
+		"\n- You CAN build complete multi-file projects yourself: create each file with its own tool call, one per line, then verify with testgen. Never refuse a build for capability reasons." +
+		"\n- Multi-file work: one tool line per file (read takes a paths array). Check changes when done." +
 		"\n- user gives a URL or asks about a webpage: browser (fetch it yourself, never ask the user to paste it)." +
 		"\n- run project tests: testgen. check for leaked secrets: security." +
 		"\n- GitHub repos/PRs/issues or clone a link: github. repo history/diffs/commits: git." +

@@ -193,7 +193,7 @@ On primary failure, configured cloud providers are retried as fallbacks
 
 ## 9. Agent tools
 
-Build mode tools (plan gets the read-only subset): `read` `write` `create` `add` `edit` `remove`
+Build mode tools (plan gets the read-only subset): `read` (multi-path) `write` `create` `add` `edit` `remove` `changes`
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`

@@ -59,6 +59,7 @@ func (r *Registry) Names() []string {
 func DefaultRegistry(workdir string) *Registry {
 	r := NewRegistry()
 	r.Add(&ReadTool{})
+	r.Add(&ChangesTool{Workdir: workdir})
 	r.Add(&GrepTool{})
 	r.Add(&GlobTool{})
 	r.Add(&WriteTool{Workdir: workdir})

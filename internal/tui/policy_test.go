@@ -48,6 +48,9 @@ func TestDelegatesToUser(t *testing.T) {
 		"do it yourself please",
 		"try running npm test",
 		"as an AI, I can't access files",
+		"I can't build a banking system",
+		"I'm unable to create files",
+		"that's beyond my capabilities",
 	} {
 		if !delegatesToUser(s) {
 			t.Fatalf("miss: %q", s)

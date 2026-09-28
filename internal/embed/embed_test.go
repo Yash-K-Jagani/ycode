@@ -28,9 +28,48 @@ func TestCosine(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := Cosine(tc.a, tc.b)
+			got, err := Cosine(tc.a, tc.b)
+			if err != nil {
+				t.Fatalf("Cosine: %v", err)
+			}
 			if math.Abs(got-tc.want) > 1e-9 {
 				t.Fatalf("Cosine = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The regression: Cosine used to compare the overlapping prefix of two
+// vectors, so after an embedding-model swap it returned a confident score
+// computed from unrelated numbers. A caller ranking an incompatible index that
+// way returns wrong answers with nothing indicating anything is wrong.
+func TestCosineRefusesMismatchedDimensions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		a, b []float64
+	}{
+		{"query longer", []float64{1, 2, 3, 4}, []float64{1, 2, 3}},
+		{"query shorter", []float64{1, 2}, []float64{1, 2, 3}},
+		{"one empty", nil, []float64{1}},
+		{"both empty is fine", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Cosine(tc.a, tc.b)
+			if tc.name == "both empty is fine" {
+				if err != nil {
+					t.Fatalf("two empty vectors should compare, got %v", err)
+				}
+				if got != 0 {
+					t.Fatalf("got %v", got)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a %d vs %d comparison returned %v with no error", len(tc.a), len(tc.b), got)
+			}
+			// The message has to say what to do, not just that it failed.
+			if !strings.Contains(err.Error(), "re-index") {
+				t.Fatalf("error does not say how to fix it: %v", err)
 			}
 		})
 	}
@@ -41,7 +80,15 @@ func TestCosine(t *testing.T) {
 func TestCosineIsSymmetric(t *testing.T) {
 	a := []float64{0.3, -0.7, 0.2, 0.9}
 	b := []float64{0.5, 0.1, -0.4, 0.6}
-	if x, y := Cosine(a, b), Cosine(b, a); math.Abs(x-y) > 1e-12 {
+	x, err := Cosine(a, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, err := Cosine(b, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(x-y) > 1e-12 {
 		t.Fatalf("Cosine(a,b) = %v but Cosine(b,a) = %v", x, y)
 	}
 }

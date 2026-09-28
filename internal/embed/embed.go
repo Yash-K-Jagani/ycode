@@ -55,19 +55,30 @@ func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float64, error
 	return v.Embeddings, nil
 }
 
-func Cosine(a, b []float64) float64 {
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
+// Cosine returns the cosine similarity of two vectors.
+//
+// Vectors of different lengths are an error rather than a truncated
+// comparison. They mean the two were produced by different embedding models -
+// nomic-embed-text is 768 dimensions, others are not - and comparing the
+// overlapping prefix yields a confident, plausible score computed from
+// unrelated numbers. A caller that silently ranks an incompatible index
+// returns wrong answers with no indication anything is wrong, which is worse
+// than being told to re-index.
+//
+// A zero vector has no direction, so its similarity is 0 with no error: that
+// is a real value, not a mismatch.
+func Cosine(a, b []float64) (float64, error) {
+	if len(a) != len(b) {
+		return 0, fmt.Errorf("embed: cannot compare %d-dimensional and %d-dimensional vectors: the embedding model changed, re-index with /rag ingest", len(a), len(b))
 	}
 	var dot, na, nb float64
-	for i := 0; i < n; i++ {
+	for i := range a {
 		dot += a[i] * b[i]
 		na += a[i] * a[i]
 		nb += b[i] * b[i]
 	}
 	if na == 0 || nb == 0 {
-		return 0
+		return 0, nil
 	}
-	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+	return dot / (math.Sqrt(na) * math.Sqrt(nb)), nil
 }

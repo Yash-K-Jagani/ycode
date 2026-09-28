@@ -235,7 +235,12 @@ func loadIndexFile(workdir string) (Index, bool) {
 }
 
 // Query returns top-K chunks by cosine similarity.
-func Query(idx Index, qvec []float64, k int) []Chunk {
+//
+// It reports an error when the query vector and the stored chunks disagree on
+// dimension, which means the index was built with a different embedding model.
+// Scoring anyway would return confidently-ranked nonsense, so the index is
+// reported as unusable instead and the caller can tell the user to re-index.
+func Query(idx Index, qvec []float64, k int) ([]Chunk, error) {
 	if k <= 0 {
 		k = topK
 	}
@@ -248,14 +253,18 @@ func Query(idx Index, qvec []float64, k int) []Chunk {
 		if len(c.Vec) == 0 {
 			continue
 		}
-		ss = append(ss, scored{c, embed.Cosine(qvec, c.Vec)})
+		s, err := embed.Cosine(qvec, c.Vec)
+		if err != nil {
+			return nil, err
+		}
+		ss = append(ss, scored{c, s})
 	}
 	sort.Slice(ss, func(i, j int) bool { return ss[i].s > ss[j].s })
 	var out []Chunk
 	for i := 0; i < len(ss) && i < k; i++ {
 		out = append(out, ss[i].c)
 	}
-	return out
+	return out, nil
 }
 
 func FormatContext(chunks []Chunk) string {

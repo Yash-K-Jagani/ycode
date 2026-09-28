@@ -593,7 +593,12 @@ func slashRegistry() map[string]slashHandler {
 			if err != nil {
 				return "rag query failed: " + err.Error(), nil
 			}
-			chunks := rag.Query(idx, qv[0], 4)
+			chunks, err := rag.Query(idx, qv[0], 4)
+			if err != nil {
+				// Almost always a stale index: say so, rather than returning
+				// matches that were scored against the wrong vectors.
+				return "rag: " + err.Error(), nil
+			}
 			if len(chunks) == 0 {
 				return "rag: no matches.", nil
 			}

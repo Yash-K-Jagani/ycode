@@ -311,6 +311,10 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
 - **Local RAG**: `/rag ingest [path]` chunks the repo (40-line windows) and
   embeds via Ollama (`nomic-embed-text`); top-4 chunks auto-inject into
   build/plan/goal turns; `/rag <query>` searches manually. JSON index per project.
+  An index built with a different embedding model is reported rather than used:
+  comparing vectors of different lengths used to score the overlapping prefix,
+  which returned a confident ranking of unrelated text. Re-run `/rag ingest`
+  after changing models.
 - **Semantic cache**: exact + 0.985-cosine hits per provider+model, 7-day TTL,
   chat/thinking only (never tool turns). Hits reply instantly with `⚡`.
 - **Router**: latency stats + cloud fallbacks (both single-shot and agent-loop

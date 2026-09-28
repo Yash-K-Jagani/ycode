@@ -71,7 +71,10 @@ func TestIngestQuery(t *testing.T) {
 		t.Fatal("load failed")
 	}
 	qv, _ := fakeEmbed(context.Background(), []string{"apple apple"})
-	top := Query(loaded, qv[0], 1)
+	top, err := Query(loaded, qv[0], 1)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(top) != 1 || !strings.Contains(top[0].Path, "apple") {
 		t.Fatalf("bad retrieval: %+v", top)
 	}
@@ -101,7 +104,11 @@ func TestSQLSaveLoad(t *testing.T) {
 		t.Fatalf("sql load: %v %d", ok, len(loaded.Chunks))
 	}
 	qv, _ := fakeEmbed(context.Background(), []string{"apple apple"})
-	if top := Query(loaded, qv[0], 1); len(top) != 1 {
+	top, err := Query(loaded, qv[0], 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 1 {
 		t.Fatal("no retrieval from sql index")
 	}
 }
@@ -130,7 +137,10 @@ func TestLiveEmbedIngest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	top := Query(idx, qv[0], 2)
+	top, err := Query(idx, qv[0], 2)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(top) == 0 {
 		t.Fatal("no results")
 	}

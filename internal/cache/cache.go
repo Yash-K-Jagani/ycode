@@ -169,7 +169,15 @@ func (c *Cache) Lookup(ctx context.Context, prompt, provider, model string) (str
 		if it.Provider != provider || len(it.Vec) == 0 {
 			continue
 		}
-		if s := embed.Cosine(vecs[0], it.Vec); s > bestS {
+		// A cached entry from a different embedding model is a different
+		// dimension, which is not comparable. Skipping it is correct: the
+		// alternative is matching against part of a vector and answering
+		// from an unrelated prompt.
+		s, err := embed.Cosine(vecs[0], it.Vec)
+		if err != nil {
+			continue
+		}
+		if s > bestS {
 			best, bestS = i, s
 		}
 	}

@@ -176,7 +176,14 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		if !m.ragOff {
 			if idx, ok := rag.Load(workdir); ok {
 				if qv, err := m.embedder.Embed(ctx, []string{userText}); err == nil && len(qv) > 0 {
-					if chunks := rag.Query(idx, qv[0], 4); len(chunks) > 0 {
+					chunks, qerr := rag.Query(idx, qv[0], 4)
+					if qerr != nil {
+						// The index was built with a different embedding
+						// model. Silently skipping it would leave the user
+						// wondering why RAG stopped finding anything, so the
+						// turn says so once.
+						ragNote = "RAG skipped: " + qerr.Error()
+					} else if len(chunks) > 0 {
 						ragContext = rag.FormatContext(chunks)
 						ragNote = fmt.Sprintf("RAG %d chunks", len(chunks))
 					}

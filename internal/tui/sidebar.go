@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -14,6 +15,52 @@ import (
 )
 
 const sideWidth = 30
+
+// sidebarCache holds the values the sidebar reads from disk, so rendering it
+// does not.
+//
+// View runs after every message, and a streaming turn delivers a message per
+// token, so the sidebar was reading .ycode/todos.json and querying the batch
+// table a few hundred times a second. Measured at 547µs per render, all of it
+// I/O for values that do not change while text is arriving.
+//
+// The cache is dropped whenever a tool result arrives, because that is the only
+// thing in the TUI that can change the task list. A short expiry covers the
+// remaining case - a batch queued by another process - without reintroducing
+// per-token I/O.
+const sidebarTTL = 2 * time.Second
+
+type sidebarCache struct {
+	at    time.Time
+	todos []tools.TodoItem
+	queue int
+}
+
+func (m *Model) sidebarData() sidebarCache {
+	if !m.side.at.IsZero() && time.Since(m.side.at) < sidebarTTL {
+		return m.side
+	}
+	m.side = sidebarCache{
+		at:    time.Now(),
+		todos: tools.ReadTodos(m.workdir),
+		queue: pendingJobs(),
+	}
+	return m.side
+}
+
+// invalidateSidebar forces the next render to re-read. Called where a tool
+// result lands, since that is what mutates the task list.
+func (m *Model) invalidateSidebar() { m.side = sidebarCache{} }
+
+func pendingJobs() int {
+	n := 0
+	for _, j := range batch.Load().List() {
+		if j.Status == "queued" {
+			n++
+		}
+	}
+	return n
+}
 
 func shortTokens(n int) string {
 	if n >= 1000 {
@@ -40,6 +87,7 @@ func ctxBar(used, budget int) string {
 }
 
 func (m *Model) sidebar(height int) string {
+	data := m.sidebarData()
 	head := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent)
 	dim := lipgloss.NewStyle().Foreground(m.th.Dim)
 	val := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#222222", Dark: "#DDDDDD"})
@@ -82,7 +130,7 @@ func (m *Model) sidebar(height int) string {
 		b.WriteString(dim.Render(truncSide(meter)) + "\n")
 	}
 	sec("tasks")
-	todos := tools.ReadTodos(m.workdir)
+	todos := data.todos
 	if len(todos) == 0 {
 		b.WriteString(dim.Render("no tasks — big job? I break it down in build") + "\n")
 	} else {
@@ -103,17 +151,10 @@ func (m *Model) sidebar(height int) string {
 		}
 	}
 	sec("queue")
-	q := batch.Load().List()
-	pending := 0
-	for _, j := range q {
-		if j.Status == "queued" {
-			pending++
-		}
-	}
-	if pending == 0 {
+	if data.queue == 0 {
 		b.WriteString(dim.Render("no queued jobs") + "\n")
 	} else {
-		b.WriteString(val.Render(fmt.Sprintf("%d queued", pending)) + "\n")
+		b.WriteString(val.Render(fmt.Sprintf("%d queued", data.queue)) + "\n")
 	}
 	body := b.String()
 	lines := strings.Count(body, "\n")

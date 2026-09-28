@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/router"
@@ -22,9 +23,7 @@ import (
 
 func newKeyModel(t *testing.T) *Model {
 	t.Helper()
-	home := t.TempDir()
-	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
-	t.Setenv("HOME", home)        // and on unix
+	tempHome(t)
 	ta := textarea.New()
 	ta.SetHeight(1)
 	cfg := config.Defaults()
@@ -38,6 +37,7 @@ func newKeyModel(t *testing.T) *Model {
 		mode:    modes.Build,
 		workdir: t.TempDir(),
 		toolreg: tools.DefaultRegistry(t.TempDir()),
+		tracker: cost.New(),
 		hookset: hooks.LoadFiles(nil),
 		ta:      ta,
 		sess:    sessions.New(cfg.ActiveProvider, cfg.ActiveModel),

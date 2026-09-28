@@ -48,6 +48,12 @@ type Model struct {
 	prog    *tea.Program
 	startup string
 
+	// side holds the sidebar's disk-backed values. The sidebar is rendered on
+	// every message, and bubbletea sends one per streamed token, so reading the
+	// todo file and the batch queue there meant two file/SQLite reads per
+	// chunk of output. See sidebarCache.
+	side sidebarCache
+
 	mode    modes.Mode
 	agent   agents.Agent
 	toolreg *tools.Registry
@@ -410,18 +416,23 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cancelled {
 			return m, nil
 		}
+		// A tool result is the only thing in the TUI that can change the task
+		// list the sidebar shows, so this is where the cache is dropped.
+		m.invalidateSidebar()
 		m.appendSys(string(msg))
 		return m, nil
 	case fileOpMsg:
 		if m.cancelled {
 			return m, nil
 		}
+		m.invalidateSidebar()
 		m.appendFileCard(msg)
 		return m, nil
 	case cmdOpMsg:
 		if m.cancelled {
 			return m, nil
 		}
+		m.invalidateSidebar()
 		m.appendCmdCard(msg)
 		return m, nil
 	case resetStreamMsg:
@@ -432,6 +443,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		m.busy = false
 		m.turnCancel = nil
+		// A turn can end with the task list changed by a batch of tools, and
+		// goal mode closes steps in its final turn.
+		m.invalidateSidebar()
 		if m.cancelled {
 			m.cancelled = false
 			m.stopGoalRun()

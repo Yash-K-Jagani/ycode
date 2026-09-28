@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/httpx"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 type APITool struct{ Allowlist []string }
@@ -93,7 +94,7 @@ func (t *APITool) Run(ctx context.Context, args json.RawMessage) (string, error)
 	}
 	out += string(data)
 	if len(out) > 24*1024 {
-		out = out[:24*1024] + "\n…(truncated)"
+		out = textutil.Truncate(out, 24*1024) + "\n…(truncated)"
 	}
 	return out, nil
 }

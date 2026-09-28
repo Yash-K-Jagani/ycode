@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/httpx"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 var (
@@ -72,7 +73,7 @@ func (t *BrowserTool) Run(ctx context.Context, args json.RawMessage) (string, er
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
 	text := ExtractText(string(data))
 	if len(text) > 24*1024 {
-		text = text[:24*1024] + "\n…(truncated)"
+		text = textutil.Truncate(text, 24*1024) + "\n…(truncated)"
 	}
 	if strings.TrimSpace(text) == "" {
 		return "(no readable text)", nil

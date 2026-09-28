@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	yctx "github.com/Yash-K-Jagani/ycode/internal/context"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 const fileTreeWidth = 22
@@ -20,7 +21,7 @@ func (m *Model) fileTreeView(height int) string {
 	// truncate long names to fit
 	for i, l := range lines {
 		if len(l) > fileTreeWidth-4 {
-			lines[i] = l[:fileTreeWidth-7] + "…"
+			lines[i] = textutil.Truncate(l, fileTreeWidth-7)
 		}
 	}
 	content := strings.Join(lines, "\n")

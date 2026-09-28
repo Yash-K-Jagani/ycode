@@ -447,7 +447,7 @@ func slashRegistry() map[string]slashHandler {
 				return "Working tree clean — nothing to review.", nil
 			}
 			if len(out) > 30*1024 {
-				out = out[:30*1024] + "\n…(diff truncated)"
+				out = textutil.Truncate(out, 30*1024) + "\n…(diff truncated)"
 			}
 			if postPR > 0 {
 				owner, repo, err := tools.GitHubRepo(m.workdir)

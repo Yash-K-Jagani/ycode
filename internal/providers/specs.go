@@ -30,6 +30,10 @@ type Spec struct {
 	ID string
 	// Label is the one-line description shown in the provider picker.
 	Label string
+	// Short is the bare name for compact surfaces: the /connect form and the
+	// status line, where "Ollama (local, free, private - recommended)" is too
+	// much and "ollama" is not a name a person writes.
+	Short string
 	// Local marks a provider that runs on the user's own machine: free,
 	// unmetered, and the only kind zero-data-leak mode permits.
 	Local bool
@@ -59,6 +63,7 @@ var specs = []Spec{
 	{
 		ID:     "ollama",
 		Label:  "Ollama (local, free, private - recommended)",
+		Short:  "Ollama",
 		Local:  true,
 		Models: []string{"qwen2.5-coder:3b", "qwen2.5-coder:7b-instruct-q4_K_M"},
 		// The 3B model is the recommendation because it is the one that
@@ -71,6 +76,7 @@ var specs = []Spec{
 	{
 		ID:        "gemini",
 		Label:     "Google Gemini (fast, generous free tier)",
+		Short:     "Gemini",
 		NeedsKey:  true,
 		KeyEnv:    "GEMINI_API_KEY",
 		PromptUSD: 0.000075,
@@ -84,6 +90,7 @@ var specs = []Spec{
 	{
 		ID:        "openrouter",
 		Label:     "OpenRouter (many models, pay per token)",
+		Short:     "OpenRouter",
 		NeedsKey:  true,
 		KeyEnv:    "OPENROUTER_API_KEY",
 		PromptUSD: 0.0001,
@@ -96,6 +103,7 @@ var specs = []Spec{
 	{
 		ID:          "groq",
 		Label:       "Groq (very fast, free tier)",
+		Short:       "Groq",
 		NeedsKey:    true,
 		KeyEnv:      "GROQ_API_KEY",
 		PromptUSD:   0.00005,

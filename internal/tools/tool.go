@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 func isWindows() bool { return runtime.GOOS == "windows" }
@@ -170,7 +172,7 @@ func splitLines(s string) []string {
 
 func truncate(s string, n int) string {
 	if len(s) > n {
-		return s[:n] + "…"
+		return textutil.Truncate(s, n)
 	}
 	return s
 }

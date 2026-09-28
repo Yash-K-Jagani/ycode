@@ -13,6 +13,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/security"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
@@ -360,7 +361,7 @@ func toolError(err error, out string) string {
 		return msg
 	}
 	if len(out) > maxErrOut {
-		out = out[:maxErrOut] + "\n…(output truncated)"
+		out = textutil.Truncate(out, maxErrOut) + "\n…(output truncated)"
 	}
 	return msg + "\n--- output ---\n" + out
 }

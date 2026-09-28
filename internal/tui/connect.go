@@ -12,11 +12,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Yash-K-Jagani/ycode/internal/keys"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/gemini"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/groq"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/openrouter"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -35,15 +33,29 @@ type connectProv struct {
 	Label  string
 	KeyEnv string
 	IsHost bool
+	// spec is the registry row, kept so the flow can build a client through
+	// the same constructor every other call site uses. Without it,
+	// fetchModelsCmd needed its own switch over provider names, and an
+	// unrecognised name left p nil and panicked on the first method call.
+	spec *providers.Spec
 }
 
 func connectProviders() []connectProv {
-	return []connectProv{
-		{ID: "ollama", Label: "Ollama (local, no key)", IsHost: true},
-		{ID: "gemini", Label: "Gemini", KeyEnv: "GEMINI_API_KEY"},
-		{ID: "openrouter", Label: "OpenRouter", KeyEnv: "OPENROUTER_API_KEY"},
-		{ID: "groq", Label: "Groq", KeyEnv: "GROQ_API_KEY"},
+	// Derived from the registry: locality, key env var and construction all
+	// come from the same row that the picker, the cost table and the fallback
+	// chain use. A provider added there appears here.
+	out := make([]connectProv, 0, len(providers.All()))
+	for i := range providers.All() {
+		s := providers.Get(providers.All()[i].ID)
+		out = append(out, connectProv{
+			ID:     s.ID,
+			Label:  s.Short,
+			KeyEnv: s.KeyEnv,
+			IsHost: s.Local,
+			spec:   s,
+		})
 	}
+	return out
 }
 
 type connectResult struct {
@@ -102,26 +114,25 @@ func (m *Model) fetchModelsCmd(prov connectProv, cred string) tea.Cmd {
 	if prov.IsHost && cred != "" {
 		host = cred
 	}
+	spec := prov.spec
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		var p interface {
-			ListModels(ctx context.Context) ([]apitypes.ModelInfo, error)
+		// Built through the registry, so there is no switch over provider
+		// names to fall out of step. An unknown id yields nil here and is
+		// reported below rather than dereferenced.
+		var p providers.Provider
+		if spec != nil {
+			p = spec.New(cred, host)
 		}
-		switch prov.ID {
-		case "ollama":
-			p = ollama.New(host)
-		case "gemini":
-			p = gemini.New(cred)
-		case "openrouter":
-			p = openrouter.New(cred)
-		case "groq":
-			p = groq.New(cred)
-		}
-		if ms, err := p.ListModels(ctx); err == nil && len(ms) > 0 {
-			return fetchModelsMsg{models: ms}
-		} else if err != nil && prov.ID == "ollama" {
-			return fetchModelsMsg{note: "unreachable: " + err.Error()}
+		if p != nil {
+			if ms, err := p.ListModels(ctx); err == nil && len(ms) > 0 {
+				return fetchModelsMsg{models: ms}
+			} else if err != nil && prov.ID == "ollama" {
+				return fetchModelsMsg{note: "unreachable: " + err.Error()}
+			}
+		} else {
+			return fetchModelsMsg{note: "unknown provider " + prov.ID}
 		}
 		var fb []apitypes.ModelInfo
 		for _, c := range registry.Catalog() {
@@ -339,7 +350,7 @@ func (c *connectFlow) view(width int, accent lipgloss.Color) string {
 		for i := start; i < end; i++ {
 			name := c.models[i].ID
 			if len(name) > width-10 {
-				name = name[:width-10] + "…"
+				name = textutil.Truncate(name, width-10)
 			}
 			if i == c.modelIdx {
 				fmt.Fprintf(&b, "%s\n", sel.Render("▸ "+name))

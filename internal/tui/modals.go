@@ -11,6 +11,7 @@ import (
 
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/store"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 // updateOverlay routes input to whichever modal or form is open, and reports
@@ -236,7 +237,7 @@ func (m *modelsModal) view(width int, accent lipgloss.Color) string {
 		}
 		line := fmt.Sprintf("%s/%s%s", e.Provider, e.Model, tag)
 		if len(line) > width-6 {
-			line = line[:width-9] + "…"
+			line = textutil.Truncate(line, width-9)
 		}
 		if i == m.sel {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("▸ "+line) + "\n")
@@ -316,7 +317,7 @@ func (m *sessionsModal) view(width int, accent lipgloss.Color) string {
 		s := m.filtered[i]
 		line := fmt.Sprintf("%s (%s/%s) %d msgs", s.Title, s.Provider, s.Model, len(s.Messages))
 		if len(line) > width-6 {
-			line = line[:width-9] + "…"
+			line = textutil.Truncate(line, width-9)
 		}
 		if i == m.sel {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("▸ "+line) + "\n")
@@ -396,7 +397,7 @@ func (m *storeModal) view(width int, accent lipgloss.Color) string {
 		e := m.filtered[i]
 		line := fmt.Sprintf("%s [%s] %s", e.Name, e.Kind, e.Description)
 		if len(line) > width-6 {
-			line = line[:width-9] + "…"
+			line = textutil.Truncate(line, width-9)
 		}
 		if i == m.sel {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("▸ "+line) + "\n")

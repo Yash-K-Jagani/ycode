@@ -7,6 +7,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 type slashItem struct {
@@ -147,7 +148,7 @@ func renderPalette(items []slashItem, selected, width int, accent lipgloss.Color
 		icon := iconFor(it.Name)
 		line := icon + " " + name + strings.Repeat(" ", 18-len(name)) + it.Hint
 		if len(line) > width-6 {
-			line = line[:width-6] + "…"
+			line = textutil.Truncate(line, width-6)
 		}
 		if i == selected {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(accent).Render("▸ " + line))

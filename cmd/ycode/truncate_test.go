@@ -71,11 +71,32 @@ func TestConfigKeysCoverEveryDocumentedKey(t *testing.T) {
 // A byte slice of a string containing multi-byte characters produces invalid
 // UTF-8, which a terminal renders as a replacement glyph and a model is handed
 // as mojibake. The repo brief went through exactly that path.
-//
+var byteSlice = regexp.MustCompile(`\w+\[:[^\]]+\]\s*\+`)
+
 // The pattern matched is a slice expression followed by concatenation, which is
-// the truncation idiom - `s[:n] + "…"`. Slicing a []string, []Job or a hash
-// does not match, and does not need to: those are not text.
-var byteSlice = regexp.MustCompile(`\w+\[:\d+\]\s*\+`)
+// the truncation idiom - `s[:n] + "…"` and also `name[:width-10] + "…"`, since
+// the bound is often a variable. Slicing a []string, []Job or a hash does not
+// match, and does not need to: those are not text.
+//
+// The exceptions are byte-index surgery rather than truncation: the index came
+// from strings.Index, so it is already a byte offset and slicing there is
+// exactly right. A regex cannot tell "clip to a width" from "splice at an
+// index", so each is listed verbatim - which means a second byte slice in the
+// same file is a new decision, not silently covered.
+var byteSliceAllowed = map[string]map[string]string{
+	"internal/sessions/sessions.go": {
+		`name = name[:i] + ">"`: "i is a strings.IndexAny byte offset, shortening a tool tag for display",
+	},
+	"internal/tools/edit.go": {
+		"return s[:i] + new + s[i+len(old):]": "byte-wise scan for old; i and len(old) are byte offsets by construction",
+	},
+	"internal/tui/app.go": {
+		`m.ta.SetValue(cur[:i] + at[m.atIdx].Name + " ")`: "i is a strings.LastIndex offset, splicing in an @-completion",
+	},
+	"internal/upgrade/apply.go": {
+		`downloadBase = releaseURL[:i] + "/releases/download/" + rel.TagName`: "i is a strings.Index offset, rewriting a release URL",
+	},
+}
 
 func TestNoByteSlicingOfTextRemains(t *testing.T) {
 	// Tests run with the package directory as the working directory, so find
@@ -97,20 +118,26 @@ func TestNoByteSlicingOfTextRemains(t *testing.T) {
 			return nil
 		}
 		visited++
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			rel = path
+		}
+		rel = filepath.ToSlash(rel)
+		allowed := byteSliceAllowed[rel]
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return nil
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			// Indexing a slice of structs, maps or byte slices is fine; this
-			// only catches `someString[:n]`.
 			if !byteSlice.MatchString(line) {
 				continue
 			}
-			if strings.Contains(line, "utf8") || strings.Contains(line, "byte") {
+			trimmed := strings.TrimSpace(line)
+			if reason, ok := allowed[trimmed]; ok {
+				_ = reason
 				continue
 			}
-			t.Errorf("%s:%d slices a string by bytes: %s", path, i+1, strings.TrimSpace(line))
+			t.Errorf("%s:%d slices a string by bytes: %s", rel, i+1, trimmed)
 		}
 		return nil
 	})
@@ -120,6 +147,21 @@ func TestNoByteSlicingOfTextRemains(t *testing.T) {
 	// A guard that walks nothing passes forever, so prove it looked.
 	if visited < 60 {
 		t.Fatalf("the walker saw only %d files, so this guard is vacuous", visited)
+	}
+	// And the allowlist must not rot: an entry that no longer matches anything
+	// is a stale excuse for a line that was fixed or moved.
+	for file, lines := range byteSliceAllowed {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			t.Errorf("the allowlist names %s, which does not exist", file)
+			continue
+		}
+		body := string(data)
+		for line := range lines {
+			if !strings.Contains(body, line) {
+				t.Errorf("the allowlist excuses %q in %s, which no longer appears there", line, file)
+			}
+		}
 	}
 }
 

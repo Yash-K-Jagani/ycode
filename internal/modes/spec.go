@@ -42,6 +42,31 @@ type spec struct {
 	prompt func(s spec, reg *tools.Registry, model string, rounds int) string
 }
 
+// buildTools is the full working set. It is a named var rather than an inline
+// literal so goal mode can derive its own allow-list from it.
+var buildTools = []string{
+	"read", "write", "create", "add", "edit", "remove", "summary", "changes",
+	"grep", "glob", "bash", "git", "github", "browser", "testgen", "security",
+	"tree", "todo", "memory", "patch", "run", "delete", "db", "notebook",
+	"api", "vscode", "scaffold", "models",
+}
+
+// without returns a copy of tools with the named entries removed. It never
+// aliases the input, so a mode's allow-list cannot be mutated by another.
+func without(tools []string, names ...string) []string {
+	drop := make(map[string]bool, len(names))
+	for _, n := range names {
+		drop[n] = true
+	}
+	out := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if !drop[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // specs is ordered: the slice order is the Tab cycle (Order) and the order
 // Names() reports, which is what the Parse error, the --mode help and the
 // OpenAPI enum are all derived from.
@@ -61,10 +86,12 @@ var specs = []spec{
 	{
 		mode: Goal, slash: "/goal", icon: "⚡", summary: "work a goal unattended",
 		rounds: 16, repoContext: true,
-		// Build's tools minus `delete`: an unattended multi-iteration run
-		// should not recursively delete files unattended. Remove through
-		// `remove`/bash, which are still available.
-		tools: []string{"read", "write", "create", "add", "edit", "remove", "summary", "changes", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "db", "notebook", "api", "vscode", "scaffold", "models"},
+		// Build's tools minus `delete`, derived rather than copied: an
+		// unattended multi-iteration run should not recursively delete files
+		// unattended. Remove through `remove`/bash, which are still available.
+		// A second copy of this list was how a tool added to build would
+		// silently never become available to a goal run.
+		tools: without(buildTools, "delete"),
 		prompt: func(s spec, reg *tools.Registry, model string, rounds int) string {
 			rt := routingFor(false)
 			if isSmallModel(model) {
@@ -88,7 +115,7 @@ var specs = []spec{
 	{
 		mode: Build, slash: "/build", icon: "⚡", summary: "implement and test",
 		rounds: 8, repoContext: true,
-		tools: []string{"read", "write", "create", "add", "edit", "remove", "summary", "changes", "grep", "glob", "bash", "git", "github", "browser", "testgen", "security", "tree", "todo", "memory", "patch", "run", "delete", "db", "notebook", "api", "vscode", "scaffold", "models"},
+		tools: buildTools,
 		prompt: func(s spec, reg *tools.Registry, model string, rounds int) string {
 			rt := routing()
 			if isSmallModel(model) {

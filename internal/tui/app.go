@@ -695,6 +695,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.cycleModelCmd()
+		case "ctrl+p":
+			// The palette is a completion popup driven by the input, so seeding
+			// a "/" is all it takes to open it. This binding was declared in
+			// the keymap and documented, but never dispatched.
+			if m.busy {
+				return m, nil
+			}
+			m.palHide = false
+			m.ta.SetValue("/")
+			m.ta.CursorEnd()
+			m.ta.Focus()
+			return m, textarea.Blink
+		case "ctrl+r":
+			// Same dispatch as typing /sessions, so there is one behaviour
+			// rather than two that can diverge.
+			if m.busy {
+				return m, nil
+			}
+			h, ok := slashRegistry()["/sessions"]
+			if !ok {
+				return m, nil
+			}
+			out, cmd := h(context.Background(), m, "")
+			if out != "" {
+				m.appendSys(out)
+			}
+			return m, cmd
 		case "ctrl+b":
 			m.sideOn = !m.sideOn
 			m.vp.Width = m.winW

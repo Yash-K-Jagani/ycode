@@ -43,8 +43,11 @@ func onboard(cfg *config.Config) bool {
 		fmt.Println()
 		fmt.Println("Fix it with one of:")
 		if state.NeedsModel {
-			fmt.Println("  ollama pull qwen2.5-coder:7b")
-			fmt.Println("  ycode config set active_model qwen2.5-coder:7b")
+			// Derived from the provider registry, so the command printed here
+			// is the same one `ycode setup` would act on.
+			rec := providers.DefaultModel(cfg.ActiveProvider)
+			fmt.Printf("  ollama pull %s\n", rec)
+			fmt.Printf("  ycode config set active_model %s\n", rec)
 		}
 		if state.NeedsKey {
 			if k := configKeyForEnv(state.KeyEnv); k != "" {
@@ -209,7 +212,11 @@ func chooseModel(provider string, cfg *config.Config) (string, bool) {
 		}
 		// Ollama reachable but no models installed.
 		fmt.Println("  Ollama is running but has no models installed.")
-		fmt.Printf("  Recommended for coding: %s (needs ~5 GB)\n", recommended)
+		fmt.Printf("  Recommended for coding: %s", recommended)
+		if hint := providers.Get(provider).SizeHint; hint != "" {
+			fmt.Printf(" (%s)", hint)
+		}
+		fmt.Println()
 		other, ok := promptLine("model (blank for the recommendation)")
 		if !ok {
 			return "", false

@@ -45,6 +45,9 @@ type Spec struct {
 	// suggested when a provider is chosen with no model preference.
 	Models      []string
 	Recommended string
+	// SizeHint is what the setup wizard tells the user to expect, e.g.
+	// "needs ~2 GB". Empty where download size is meaningless (a cloud API).
+	SizeHint string
 	// New builds a client. key is the API key, host the local daemon URL;
 	// each provider uses the one it needs and ignores the other.
 	New func(key, host string) Provider
@@ -54,11 +57,15 @@ type Spec struct {
 // first, because it is the recommended default.
 var specs = []Spec{
 	{
-		ID:          "ollama",
-		Label:       "Ollama (local, free, private - recommended)",
-		Local:       true,
-		Models:      []string{"qwen2.5-coder:7b-instruct-q4_K_M", "qwen2.5-coder:3b"},
-		Recommended: "qwen2.5-coder:7b-instruct-q4_K_M",
+		ID:     "ollama",
+		Label:  "Ollama (local, free, private - recommended)",
+		Local:  true,
+		Models: []string{"qwen2.5-coder:3b", "qwen2.5-coder:7b-instruct-q4_K_M"},
+		// The 3B model is the recommendation because it is the one that
+		// reliably loads and drives tools on ordinary hardware; the 7B is
+		// listed for machines that have the memory for it.
+		Recommended: "qwen2.5-coder:3b",
+		SizeHint:    "needs ~2 GB",
 		New:         func(key, host string) Provider { return ollama.New(host) },
 	},
 	{

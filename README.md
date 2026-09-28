@@ -126,10 +126,11 @@ print the exact commands to run instead, so nothing ever blocks on a prompt:
 ```
 $ ycode            # in a pipeline
 ycode is not configured yet. Non-interactive session detected.
+
 Fix it with one of:
-  ollama pull qwen2.5-coder:7b        # then: ycode config set model <name>
-  set GEMINI_API_KEY=<your key>       # or: ycode config set GEMINI_API_KEY <key>
-  ycode setup                         # interactive wizard
+  ollama pull qwen2.5-coder:3b
+  ycode config set active_model qwen2.5-coder:3b
+  ycode setup                        # interactive wizard
 ```
 
 If Ollama is running but has no models, the wizard offers to pull a
@@ -151,7 +152,6 @@ ycode                 # open the TUI in the current project
 
 No local models yet? `ollama pull qwen2.5-coder:3b`, then `/models 1`.
 No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick a model.
-
 ---
 
 ## 4. The TUI
@@ -160,7 +160,7 @@ No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick
 - **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, context meter, session + daily spend, the active goal with its iteration counter, and a live task
   list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
-- `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
+- `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Ctrl+P` command palette; `Ctrl+R` resume a session; `Ctrl+\` file tree; `Ctrl+=` compact mode; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.
 - Codebase-aware: every build/plan/goal turn sees the repo tree, README head, `AGENTS.md` rules, and git branch/status — plus `edit` tolerates `12: ` line prefixes and suggests close matches on miss.
 
@@ -276,9 +276,10 @@ Outbound webhooks (`turn_complete`, `turn_error`, `session_start`) via
 ## 8. Providers & models
 
 One OpenAI-compatible streaming path + native Ollama (`/api/chat` NDJSON,
-`/api/tags`, `/api/embed`). Keys are read from the environment only — never
-written to disk; `/connect` activates a pasted key for the session and prints
-the `export` line to persist it yourself.
+`/api/tags`, `/api/embed`). Keys come from the environment or, if you paste
+one during setup or `ycode config set`, from the **OS keyring** — never as
+plaintext in `config.yaml`. `/connect` activates a pasted key for the session
+and prints the `export` line to persist it yourself.
 
 On primary failure, configured cloud providers are retried as fallbacks
 (gemini → openrouter → groq defaults); per-provider latency lives in

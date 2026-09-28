@@ -141,6 +141,64 @@ func TestSlashForCommand(t *testing.T) {
 	}
 }
 
+// Goal mode is build mode run unattended. The two allow-lists were separate
+// copies of the same list, so a tool added to build would silently never
+// become available to a goal run - and nobody would notice until a goal
+// stalled on it.
+func TestGoalToolsAreBuildToolsWithoutDelete(t *testing.T) {
+	build := AllowedTools(Build)
+	goal := AllowedTools(Goal)
+
+	inBuild := map[string]bool{}
+	for _, n := range build {
+		inBuild[n] = true
+	}
+	for _, n := range goal {
+		if !inBuild[n] {
+			t.Fatalf("goal mode has %q, which build mode does not", n)
+		}
+	}
+	// Build may delete; goal may not. That difference is the whole point of
+	// the two lists existing separately.
+	if !inBuild["delete"] {
+		t.Fatal("build mode should keep delete")
+	}
+	for _, n := range goal {
+		if n == "delete" {
+			t.Fatal("an unattended run must not be able to delete recursively")
+		}
+	}
+	// Everything else must be there, or the run is weaker than intended.
+	if len(goal) != len(build)-1 {
+		t.Fatalf("goal has %d tools, build has %d; only delete should differ", len(goal), len(build))
+	}
+	// A goal run that cannot write or test is not a goal run.
+	for _, n := range []string{"write", "edit", "bash", "testgen", "todo"} {
+		if !contains(goal, n) {
+			t.Fatalf("goal mode is missing %q", n)
+		}
+	}
+}
+
+func TestWithoutDoesNotAliasItsInput(t *testing.T) {
+	src := []string{"a", "b", "c"}
+	got := without(src, "b")
+	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Fatalf("without = %v", got)
+	}
+	// Mutating the result must not reach back into the source.
+	got[0] = "mutated"
+	if src[0] != "a" {
+		t.Fatalf("the source was mutated: %v", src)
+	}
+	if len(without(src)) != len(src) {
+		t.Fatal("removing nothing should return everything")
+	}
+	if len(without(src, "nope")) != len(src) {
+		t.Fatal("removing an absent name should return everything")
+	}
+}
+
 // The OpenAPI enum is a second copy of the mode list that lives in another
 // file. This is the guard that keeps it honest.
 func TestOpenAPIEnumMatchesRegistry(t *testing.T) {

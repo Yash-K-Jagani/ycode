@@ -64,6 +64,11 @@ func (m *Model) advanceGoal(msg doneMsg) tea.Cmd {
 		WorkCalls:      msg.work,
 		OpenSteps:      openSteps(m.workdir),
 	})
+	if g.Rejected() {
+		// Do not pass a false completion claim off as progress: say it was
+		// turned down, then let the run carry on with the work still owed.
+		m.appendSys(g.RejectionNote())
+	}
 	// Next counts this iteration and reports whether the run may continue.
 	if !g.Next() {
 		m.goalStop()

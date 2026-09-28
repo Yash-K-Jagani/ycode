@@ -29,11 +29,6 @@ const (
 	// described the work instead of doing it. Retrying reproduces the same
 	// turn, so the run stops and says so.
 	Stalled Status = "stalled"
-	// UnearnedMet means the model claimed GOAL MET without the work to back
-	// it up: no successful tool call, or its own task list still open.
-	// Small models emit the marker whether or not anything happened, so the
-	// harness checks the claim instead of believing it.
-	UnearnedMet Status = "unearned_met"
 	// Cancelled means the user interrupted the run.
 	Cancelled Status = "cancelled"
 )
@@ -56,8 +51,16 @@ type Goal struct {
 	MaxIter   int
 	Status    Status
 	StartedAt time.Time
-	// unmet explains a rejected GOAL MET (why the claim was not credible).
-	unmet string
+	// rejected records that the last GOAL MET claim was not credible, and why.
+	// A rejected claim does not end the run — the work is still owed — but it
+	// must not pass silently either.
+	rejected bool
+	reason   string
+	// workDone and openSteps track what the run actually changed, so a run
+	// that ends without a verdict is reported honestly. A model can finish
+	// the work and then stop calling tools: that is not "nothing was done".
+	workDone  int
+	openSteps int
 }
 
 // New starts a goal with an iteration budget. maxIter <= 0 falls back to 12.
@@ -190,14 +193,23 @@ type Evidence struct {
 // Reconcile reads the model's closing markers, then checks them against what
 // the harness observed. A verdict is a claim; the evidence decides.
 //
-// Two failure modes this exists to stop, both observed with small local
-// models: narrating a turn without calling anything, and announcing "all
-// criteria satisfied" while the files on disk are untouched.
+// A met claim that the evidence does not support does not end the run: the
+// status stays active and the rejection is recorded, because the work is still
+// owed and the model usually has budget left to do it. Only a verified met
+// claim, an explicit GOAL BLOCKED, a stall, or an exhausted budget ends it.
+//
+// Three failure modes this exists to stop, all observed with small local
+// models: narrating a turn without calling anything, announcing "all criteria
+// satisfied" while the files on disk are untouched, and ticking off a task
+// list without touching a file.
 func (g *Goal) Reconcile(answer string, ev Evidence) Status {
 	if g == nil {
 		return Active
 	}
 	g.Verdict(answer)
+	g.rejected, g.reason = false, ""
+	g.workDone += ev.WorkCalls
+	g.openSteps = ev.OpenSteps
 	switch g.Status {
 	case Active:
 		// No verdict and no tool call: the turn only talked about the work.
@@ -205,28 +217,41 @@ func (g *Goal) Reconcile(answer string, ev Evidence) Status {
 			g.Status = Stalled
 		}
 	case Met:
-		// A goal run that changed nothing cannot have finished anything, and
-		// a task list with open steps is the goal's own unfinished work.
 		if !g.Credible(ev) {
-			var why []string
-			if ev.WorkCalls == 0 {
-				if ev.Calls == 0 {
-					why = append(why, "no tool was called at all")
-				} else {
-					why = append(why, "nothing was changed or run (only planning/reading steps completed)")
-				}
-			}
-			if ev.FailedCalls > 0 {
-				why = append(why, fmt.Sprintf("%d tool call(s) failed in the turn that claimed it", ev.FailedCalls))
-			}
-			if ev.OpenSteps > 0 {
-				why = append(why, fmt.Sprintf("%d task-list step(s) still open", ev.OpenSteps))
-			}
-			g.unmet = strings.Join(why, " and ")
-			g.Status = UnearnedMet
+			g.rejected, g.reason = true, unmetReason(ev)
+			g.Status = Active
 		}
 	}
 	return g.Status
+}
+
+// Rejected reports whether the last GOAL MET claim was turned down.
+func (g *Goal) Rejected() bool { return g != nil && g.rejected }
+
+// RejectionNote explains the last rejected claim, or "" when there was none.
+func (g *Goal) RejectionNote() string {
+	if !g.Rejected() {
+		return ""
+	}
+	return fmt.Sprintf("⊘ GOAL MET rejected: %s — the goal is not met, continuing", g.reason)
+}
+
+// unmetReason describes why a met claim is not credible.
+func unmetReason(ev Evidence) string {
+	var why []string
+	switch {
+	case ev.Calls == 0:
+		why = append(why, "no tool was called at all")
+	case ev.WorkCalls == 0:
+		why = append(why, "nothing was changed or run (only planning/reading steps completed)")
+	}
+	if ev.FailedCalls > 0 {
+		why = append(why, fmt.Sprintf("%d tool call(s) failed in the turn that claimed it", ev.FailedCalls))
+	}
+	if ev.OpenSteps > 0 {
+		why = append(why, fmt.Sprintf("%d task-list step(s) still open", ev.OpenSteps))
+	}
+	return strings.Join(why, " and ")
 }
 
 // Credible reports whether a claimed GOAL MET is backed by observed work: at
@@ -249,28 +274,49 @@ func (g *Goal) Summary() string {
 	return fmt.Sprintf("%s · iter %d/%d · %s", oneLine(g.Text), g.Iter, g.MaxIter, g.Status)
 }
 
+// workState describes what the run actually changed. A model can complete the
+// work and then stop calling tools, so a run that ends without a verdict must
+// not claim "nothing was done" when files changed.
+func (g *Goal) workState() string {
+	switch {
+	case g.workDone == 0:
+		return "nothing was changed"
+	case g.openSteps == 0:
+		return fmt.Sprintf("%d change(s) were made and every task-list step is closed, so the goal may already be done — review the diff before rerunning", g.workDone)
+	default:
+		return fmt.Sprintf("%d change(s) were made, but %d task-list step(s) were still open", g.workDone, g.openSteps)
+	}
+}
+
 // StopNote explains a finished run to the user, or "" while it is still going.
 func (g *Goal) StopNote() string {
 	if g == nil || g.Status == Active {
 		return ""
 	}
+	note := func(format string, a ...any) string {
+		s := fmt.Sprintf(format, a...)
+		if g.rejected {
+			s += "\n  last GOAL MET claim was rejected: " + g.reason
+		}
+		return s
+	}
 	switch g.Status {
 	case Met:
-		return fmt.Sprintf("✓ goal met after %d iteration(s): %s", g.Iter, oneLine(g.Text))
+		return note("✓ goal met after %d iteration(s): %s", g.Iter, oneLine(g.Text))
 	case Blocked:
-		return fmt.Sprintf("⊘ goal blocked after %d iteration(s): %s", g.Iter, oneLine(g.Text))
+		return note("⊘ goal blocked after %d iteration(s): %s", g.Iter, oneLine(g.Text))
 	case Spent:
-		return fmt.Sprintf("…goal budget spent (%d iterations) with the goal still open: %s", g.Iter, oneLine(g.Text))
-	case Stalled:
-		return fmt.Sprintf("⊘ goal run stopped after %d iteration(s): the model described the work instead of calling tools, so nothing was done: %s", g.Iter, oneLine(g.Text))
-	case UnearnedMet:
-		why := g.unmet
-		if why == "" {
-			why = "the work does not back the claim"
+		if g.openSteps == 0 && g.workDone > 0 {
+			return note("…goal budget spent (%d iterations). %s: %s", g.Iter, g.workState(), oneLine(g.Text))
 		}
-		return fmt.Sprintf("⊘ goal NOT met after %d iteration(s): the model claimed GOAL MET but %s: %s", g.Iter, why, oneLine(g.Text))
+		return note("…goal budget spent (%d iterations) with the goal still open: %s", g.Iter, oneLine(g.Text))
+	case Stalled:
+		if g.workDone > 0 {
+			return note("⊘ goal run stopped after %d iteration(s): the model stopped calling tools. %s: %s", g.Iter, g.workState(), oneLine(g.Text))
+		}
+		return note("⊘ goal run stopped after %d iteration(s): the model described the work instead of calling tools, so nothing was done: %s", g.Iter, oneLine(g.Text))
 	case Cancelled:
-		return fmt.Sprintf("⊘ goal run cancelled after %d iteration(s): %s", g.Iter, oneLine(g.Text))
+		return note("⊘ goal run cancelled after %d iteration(s): %s", g.Iter, oneLine(g.Text))
 	}
 	return ""
 }

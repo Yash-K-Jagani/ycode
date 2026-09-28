@@ -167,33 +167,40 @@ func TestAdvanceGoalStallsOnProseOnlyTurn(t *testing.T) {
 // A small model will happily announce "all criteria satisfied" without having
 // touched anything. Observed against qwen2.5-coder:3b: main.go untouched, a
 // broken _test.go on disk, both todo steps still open — and GOAL MET.
+//
+// A rejected claim must not end the run: the work is still owed, so the model
+// gets another iteration with the rejection shown.
 func TestGoalMetIsCheckedNotBelieved(t *testing.T) {
 	cases := []struct {
-		name  string
-		turn  doneMsg
-		clear bool // finish the task list so a met claim can be credible
-		want  goal.Status
-		note  string
+		name       string
+		turn       doneMsg
+		clear      bool // finish the task list so a met claim can be credible
+		want       goal.Status
+		reason     string
+		keepsGoing bool
 	}{
 		{
-			name: "no successful tool call",
-			turn: doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 2, oks: 0},
-			want: goal.UnearnedMet,
-			note: "nothing was changed or run",
+			name:       "no successful tool call",
+			turn:       doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 2, oks: 0},
+			want:       goal.Active,
+			reason:     "nothing was changed or run",
+			keepsGoing: true,
 		},
 		{
 			// Bookkeeping is not work: todos ticked, files untouched.
-			name:  "only bookkeeping",
-			turn:  doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 4, oks: 4},
-			clear: true,
-			want:  goal.UnearnedMet,
-			note:  "only planning/reading steps completed",
+			name:       "only bookkeeping",
+			turn:       doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 4, oks: 4},
+			clear:      true,
+			want:       goal.Active,
+			reason:     "only planning/reading steps completed",
+			keepsGoing: true,
 		},
 		{
-			name: "task list still open",
-			turn: doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 4, oks: 4, work: 2},
-			want: goal.UnearnedMet,
-			note: "2 task-list step(s) still open",
+			name:       "task list still open",
+			turn:       doneMsg{mode: modes.Goal, text: "GOAL MET: all criteria satisfied", calls: 4, oks: 4, work: 2},
+			want:       goal.Active,
+			reason:     "2 task-list step(s) still open",
+			keepsGoing: true,
 		},
 		{
 			name:  "credible",
@@ -214,18 +221,28 @@ func TestGoalMetIsCheckedNotBelieved(t *testing.T) {
 			}
 			m := newGoalModel(t)
 			m.workdir = dir
-			if cmd := m.advanceGoal(c.turn); cmd != nil {
-				t.Fatal("the run must not continue past a verdict")
-			}
+			cmd := m.advanceGoal(c.turn)
 			if m.goal.Status != c.want {
 				t.Fatalf("Status = %q, want %q", m.goal.Status, c.want)
 			}
 			out := strings.Join(m.msgs, "\n")
-			if c.note != "" && !strings.Contains(out, c.note) {
-				t.Fatalf("missing %q in: %s", c.note, out)
+			if (cmd != nil) != c.keepsGoing {
+				t.Fatalf("continued = %v, want %v", cmd != nil, c.keepsGoing)
 			}
-			if c.want == goal.UnearnedMet && !strings.Contains(out, "goal NOT met") {
-				t.Fatalf("a rejected GOAL MET must be reported: %s", out)
+			if c.reason == "" {
+				if strings.Contains(out, "GOAL MET rejected") {
+					t.Fatalf("a credible met must not be rejected: %v", m.msgs)
+				}
+				return
+			}
+			if !strings.Contains(out, "GOAL MET rejected") {
+				t.Fatalf("a rejected claim must be shown: %v", m.msgs)
+			}
+			if !strings.Contains(out, c.reason) {
+				t.Fatalf("the rejection should say %q: %v", c.reason, out)
+			}
+			if !strings.Contains(out, "continuing") {
+				t.Fatalf("the rejection should say the run continues: %v", out)
 			}
 		})
 	}

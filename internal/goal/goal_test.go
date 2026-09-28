@@ -164,41 +164,51 @@ func TestContinuationIsSystemShaped(t *testing.T) {
 	}
 }
 
-// The verdict is a claim; the evidence decides. Both failure modes below were
-// seen from a real run against qwen2.5-coder:3b.
+// The verdict is a claim; the evidence decides. A claim the evidence does not
+// support does not end the run — the work is still owed — but it is recorded
+// and reported. All of these failure modes were seen in testing with
+// qwen2.5-coder:3b.
 func TestReconcileChecksTheClaim(t *testing.T) {
 	worked := Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 2}
 	cases := []struct {
-		name   string
-		answer string
-		ev     Evidence
-		want   Status
+		name     string
+		answer   string
+		ev       Evidence
+		want     Status
+		rejected bool
 	}{
-		{"credible met", "done\nGOAL MET", worked, Met},
-		{"met with no calls", "done\nGOAL MET", Evidence{Calls: 2, SucceededCalls: 0}, UnearnedMet},
-		{"met with nothing at all", "done\nGOAL MET", Evidence{}, UnearnedMet},
-		{"met with open steps", "done\nGOAL MET", Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 2, OpenSteps: 2}, UnearnedMet},
+		{"credible met", "done\nGOAL MET", worked, Met, false},
 		{
 			// The exact false positive seen in testing: a 3b model created a
 			// two-item task list, marked both done, changed nothing, and said
 			// "GOAL MET". Todo calls are bookkeeping, not work.
-			name:   "met after only bookkeeping",
-			answer: "GOAL MET",
-			ev:     Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 0},
-			want:   UnearnedMet,
+			name:     "met after only bookkeeping",
+			answer:   "GOAL MET",
+			ev:       Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 0},
+			want:     Active,
+			rejected: true,
 		},
 		{
 			// A turn that wrote greeting.txt fine but errored on main.go
-			// still claimed GOAL MET for both.
-			name:   "met with a failed call",
-			answer: "GOAL MET",
-			ev:     Evidence{Calls: 3, SucceededCalls: 2, WorkCalls: 1, FailedCalls: 1},
-			want:   UnearnedMet,
+			// still claimed GOAL MET for both — recoverable, so it retries.
+			name:     "met with a failed call",
+			answer:   "GOAL MET",
+			ev:       Evidence{Calls: 3, SucceededCalls: 2, WorkCalls: 1, FailedCalls: 1},
+			want:     Active,
+			rejected: true,
 		},
-		{"prose only", "I will do that next turn.", Evidence{}, Stalled},
-		{"prose after real work", "Step 1 done, starting step 2.", worked, Active},
-		{"blocked needs no evidence", "GOAL BLOCKED: no DSN", Evidence{}, Blocked},
-		{"failing calls still narrate", "trying again shortly", Evidence{Calls: 3, SucceededCalls: 0}, Active},
+		{
+			name:     "met with open steps",
+			answer:   "GOAL MET",
+			ev:       Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 2, OpenSteps: 2},
+			want:     Active,
+			rejected: true,
+		},
+		{"met with nothing at all", "GOAL MET", Evidence{}, Active, true},
+		{"prose only", "I will do that next turn.", Evidence{}, Stalled, false},
+		{"prose after real work", "Step 1 done, starting step 2.", worked, Active, false},
+		{"blocked needs no evidence", "GOAL BLOCKED: no DSN", Evidence{}, Blocked, false},
+		{"failing calls still narrate", "trying again shortly", Evidence{Calls: 3, SucceededCalls: 0}, Active, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -206,8 +216,11 @@ func TestReconcileChecksTheClaim(t *testing.T) {
 			if got := g.Reconcile(c.answer, c.ev); got != c.want {
 				t.Fatalf("Reconcile = %q, want %q", got, c.want)
 			}
-			// A run continues only while the goal is still active and has
-			// budget left; every other verdict ends it.
+			if g.Rejected() != c.rejected {
+				t.Fatalf("Rejected() = %v, want %v", g.Rejected(), c.rejected)
+			}
+			// A run continues while the goal is still owed, unless the model
+			// gave up or the budget is gone.
 			if more := g.Next(); more != (c.want == Active) {
 				t.Fatalf("Next() = %v for status %q", more, c.want)
 			}
@@ -215,34 +228,77 @@ func TestReconcileChecksTheClaim(t *testing.T) {
 	}
 }
 
-func TestUnearnedMetExplainsItself(t *testing.T) {
+func TestRejectionIsReportedAndExplained(t *testing.T) {
 	g := New("ship it", 4)
-	g.Reconcile("GOAL MET: everything is done", Evidence{Calls: 1})
-	note := g.StopNote()
-	if !strings.Contains(note, "goal NOT met") {
-		t.Fatalf("StopNote = %q", note)
+	g.Reconcile("GOAL MET: everything is done", Evidence{})
+	note := g.RejectionNote()
+	if !strings.Contains(note, "GOAL MET rejected") {
+		t.Fatalf("RejectionNote = %q", note)
 	}
-	if !strings.Contains(note, "nothing was changed or run") {
-		t.Fatalf("StopNote should name the reason: %q", note)
+	if !strings.Contains(note, "no tool was called at all") {
+		t.Fatalf("RejectionNote should name the reason: %q", note)
+	}
+	if !strings.Contains(note, "continuing") {
+		t.Fatalf("RejectionNote should say the run continues: %q", note)
 	}
 	// A turn that called nothing at all says so.
 	g0 := New("ship it", 4)
-	g0.Reconcile("GOAL MET", Evidence{})
-	if n := g0.StopNote(); !strings.Contains(n, "no tool was called at all") {
-		t.Fatalf("StopNote = %q", n)
+	g0.Reconcile("GOAL MET", Evidence{Calls: 4, SucceededCalls: 4, WorkCalls: 0})
+	if n := g0.RejectionNote(); !strings.Contains(n, "nothing was changed or run") {
+		t.Fatalf("RejectionNote = %q", n)
 	}
 	// Both reasons are reported when both apply.
 	g2 := New("ship it", 4)
 	g2.Reconcile("GOAL MET", Evidence{Calls: 3, SucceededCalls: 0, OpenSteps: 1})
-	n := g2.StopNote()
+	n := g2.RejectionNote()
 	if !strings.Contains(n, "nothing was changed or run") || !strings.Contains(n, "1 task-list step(s) still open") {
-		t.Fatalf("StopNote = %q", n)
+		t.Fatalf("RejectionNote = %q", n)
 	}
 	// A partial failure is named as such, not as "nothing succeeded".
 	g3 := New("ship it", 4)
 	g3.Reconcile("GOAL MET", Evidence{Calls: 3, SucceededCalls: 2, WorkCalls: 1, FailedCalls: 1})
-	if n := g3.StopNote(); !strings.Contains(n, "1 tool call(s) failed in the turn that claimed it") {
-		t.Fatalf("StopNote = %q", n)
+	if n := g3.RejectionNote(); !strings.Contains(n, "1 tool call(s) failed in the turn that claimed it") {
+		t.Fatalf("RejectionNote = %q", n)
+	}
+	// A clean turn clears a previous rejection, so notes are never stale.
+	g.Reconcile("still working", worked2())
+	if g.Rejected() || g.RejectionNote() != "" {
+		t.Fatalf("a rejected flag leaked into the next turn: %q", g.RejectionNote())
+	}
+}
+
+// worked2 is a turn that genuinely changed something.
+func worked2() Evidence { return Evidence{Calls: 2, SucceededCalls: 2, WorkCalls: 1} }
+
+func TestStopNoteCarriesTheLastRejection(t *testing.T) {
+	g := New("ship it", 2)
+	g.Reconcile("GOAL MET", Evidence{Calls: 2, SucceededCalls: 2, WorkCalls: 0})
+	g.Next() // iteration 1, still owed
+	g.Reconcile("GOAL MET", Evidence{Calls: 2, SucceededCalls: 2, WorkCalls: 0})
+	if g.Next() {
+		t.Fatal("the budget should be spent")
+	}
+	if g.Status != Spent {
+		t.Fatalf("Status = %q, want budget_exhausted", g.Status)
+	}
+	note := g.StopNote()
+	if !strings.Contains(note, "budget spent") {
+		t.Fatalf("StopNote = %q", note)
+	}
+	if !strings.Contains(note, "last GOAL MET claim was rejected") {
+		t.Fatalf("the final report must say the claim was never credible: %q", note)
+	}
+}
+
+func TestMetDoesNotCarryAStaleRejection(t *testing.T) {
+	g := New("ship it", 4)
+	g.Reconcile("GOAL MET", Evidence{Calls: 1})
+	g.Reconcile("GOAL MET", Evidence{Calls: 3, SucceededCalls: 3, WorkCalls: 2})
+	if g.Status != Met {
+		t.Fatalf("Status = %q, want met", g.Status)
+	}
+	if strings.Contains(g.StopNote(), "rejected") {
+		t.Fatalf("a met run must not report a stale rejection: %q", g.StopNote())
 	}
 }
 
@@ -262,6 +318,84 @@ func TestIsWorkTool(t *testing.T) {
 	}
 	if IsWorkTool("nope") || IsWorkTool("") {
 		t.Fatal("unknown tools are not work")
+	}
+}
+
+// A model can finish the work and then stop calling tools. The report must
+// describe what actually changed, not assert that nothing happened — observed
+// against qwen2.5-coder:3b, which wrote a correct function and its test file
+// and was then reported as "nothing was done".
+func TestStopNoteReportsRealWork(t *testing.T) {
+	cases := []struct {
+		name    string
+		maxIter int
+		turns   []Evidence
+		want    []string
+		notWant []string
+	}{
+		{
+			name:    "work done, list closed, then a stall",
+			maxIter: 3,
+			turns: []Evidence{
+				{Calls: 2, SucceededCalls: 2, WorkCalls: 2}, // real work, no verdict
+				{}, // then the model stopped calling tools
+			},
+			want: []string{
+				"the model stopped calling tools",
+				"2 change(s) were made",
+				"every task-list step is closed",
+				"review the diff",
+			},
+			notWant: []string{"nothing was done"},
+		},
+		{
+			name:    "work done, steps still open, then a stall",
+			maxIter: 3,
+			turns: []Evidence{
+				{Calls: 2, SucceededCalls: 2, WorkCalls: 1, OpenSteps: 2},
+				{OpenSteps: 2}, // still two steps open when it stalled
+			},
+			want:    []string{"1 change(s) were made", "2 task-list step(s) were still open"},
+			notWant: []string{"nothing was done", "may already be done"},
+		},
+		{
+			name:    "no work at all, then a stall",
+			maxIter: 3,
+			turns:   []Evidence{{}},
+			want:    []string{"described the work instead of calling tools", "nothing was done"},
+			notWant: []string{"change(s) were made"},
+		},
+		{
+			name:    "work done, list closed, budget spent",
+			maxIter: 2,
+			turns:   []Evidence{{Calls: 2, SucceededCalls: 2, WorkCalls: 3}, {Calls: 1, SucceededCalls: 1, WorkCalls: 1}},
+			want:    []string{"budget spent", "4 change(s) were made", "may already be done"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := New("ship it", c.maxIter)
+			for _, ev := range c.turns {
+				g.Reconcile("I'll finish the rest shortly", ev)
+				if g.Next() {
+					continue
+				}
+			}
+			note := g.StopNote()
+			if note == "" {
+				t.Fatal("a finished run must report something")
+			}
+			for _, w := range c.want {
+				if !strings.Contains(note, w) {
+					t.Fatalf("StopNote = %q\nmissing %q", note, w)
+				}
+			}
+			for _, w := range c.notWant {
+				if strings.Contains(note, w) {
+					t.Fatalf("StopNote = %q\nshould not contain %q", note, w)
+				}
+			}
+		})
 	}
 }
 

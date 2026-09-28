@@ -227,6 +227,9 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 			WorkCalls:      workOK,
 			OpenSteps:      openSteps(o.Workdir),
 		})
+		if g.Rejected() {
+			_, _ = fmt.Fprintf(log, "%s\n", g.RejectionNote())
+		}
 		if !g.Next() {
 			break
 		}

@@ -381,6 +381,22 @@ func (m *Model) atItems() ([]slashItem, string) {
 // The switch itself is applied on the UI thread via modelSwitchedMsg: doing it
 // here would write m.cfg, m.sess and router.cfg from a Cmd goroutine while the
 // turn goroutine and View() read them.
+// Shutdown saves state and releases everything that outlives the process. It is
+// exported so the CLI can call it from a defer, covering every exit path: the
+// Ctrl+D and Esc keys, the /exit panic, a recovered handler panic and a signal.
+// MCP servers are child processes, and on Windows they survive the parent, so
+// without this repeated sessions leave orphans holding stdio pipes.
+func (m *Model) Shutdown() {
+	_ = m.sess.Save()
+	if m.pluginLoader != nil {
+		m.pluginLoader.Close()
+	}
+	if m.mcpMgr != nil {
+		m.mcpMgr.Close()
+	}
+	m.stopWatch()
+}
+
 func (m *Model) cycleModelCmd() tea.Cmd {
 	host, current := m.cfg.OllamaHost, m.cfg.ActiveModel
 	return func() tea.Msg {
@@ -1349,9 +1365,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+d":
-			_ = m.sess.Save()
-			m.pluginLoader.Close()
-			m.stopWatch()
+			m.Shutdown()
 			return m, tea.Quit
 		case "ctrl+c", "esc":
 			if m.busy {
@@ -1372,8 +1386,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			_ = m.sess.Save()
-			m.pluginLoader.Close()
-			m.stopWatch()
+			m.Shutdown()
 			return m, tea.Quit
 		case "ctrl+n":
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)

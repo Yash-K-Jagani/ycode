@@ -77,6 +77,10 @@ func launchTUI() {
 	m := tui.New(cfg, r, sess, workdir)
 	prog := tea.NewProgram(&m, tea.WithAltScreen())
 	m.SetProgram(prog)
+	// One cleanup point for every exit path — Ctrl+D, the /exit panic, a
+	// recovered handler panic, a signal. Without it, MCP child processes
+	// survive the parent on Windows and pile up across sessions.
+	defer m.Shutdown()
 	if _, err := prog.Run(); err != nil {
 		fmt.Println("tui error:", err)
 		os.Exit(1)

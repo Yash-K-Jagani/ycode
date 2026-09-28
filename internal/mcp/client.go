@@ -36,6 +36,13 @@ type Client struct {
 	mu     sync.Mutex
 	nextID int64
 	born   time.Time
+	// dead is set once the server is killed or its pipe breaks. The scanner
+	// is not safe to reuse after an interrupted read, and a server that has
+	// stopped answering will not start again, so every later call fails fast
+	// instead of blocking.
+	dead bool
+	// kill is idempotent: it guards the kill/wait in the timeout path.
+	killOnce sync.Once
 }
 
 func Start(command string, args []string, env map[string]string) (*Client, error) {
@@ -62,22 +69,30 @@ func Start(command string, args []string, env map[string]string) (*Client, error
 	return c, nil
 }
 
-func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	id := atomic.AddInt64(&c.nextID, 1)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	deadline := time.Now().Add(60 * time.Second)
-	if dl, ok := ctx.Deadline(); ok {
-		deadline = dl
-	}
-	_ = deadline
-	if err := c.stdin.Encode(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
-		return nil, err
-	}
+// callTimeout bounds a request that carries no deadline of its own.
+const callTimeout = 60 * time.Second
+
+// killServer stops the process, which is the only portable way to unblock a
+// read on its stdout pipe.
+func (c *Client) killServer() {
+	c.dead = true
+	c.killOnce.Do(func() {
+		if c.cmd != nil && c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+			_ = c.cmd.Wait()
+		}
+	})
+}
+
+// readResponse reads lines until the response to id arrives.
+//
+// It runs on its own goroutine so a silent server cannot outlive the
+// deadline: Scan blocks on the pipe, and nothing in the stdlib lets you bound
+// that, so the timeout path kills the server instead.
+func (c *Client) readResponse(id int64, method string) (json.RawMessage, error) {
 	for c.scan.Scan() {
 		var resp rpcResponse
-		line := c.scan.Bytes()
-		if err := json.Unmarshal(line, &resp); err != nil {
+		if err := json.Unmarshal(c.scan.Bytes(), &resp); err != nil {
 			continue
 		}
 		if resp.ID == nil || *resp.ID != id {
@@ -88,10 +103,53 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		}
 		return resp.Result, nil
 	}
+	c.dead = true
 	if err := c.scan.Err(); err != nil {
 		return nil, err
 	}
 	return nil, fmt.Errorf("mcp %s: server closed stream", method)
+}
+
+func (c *Client) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	id := atomic.AddInt64(&c.nextID, 1)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.dead {
+		return nil, fmt.Errorf("mcp %s: server is not running (restart it with /mcps tools)", method)
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, callTimeout)
+		defer cancel()
+	}
+	if err := c.stdin.Encode(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
+		c.dead = true
+		return nil, fmt.Errorf("mcp %s: %w", method, err)
+	}
+
+	type outcome struct {
+		raw json.RawMessage
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		raw, err := c.readResponse(id, method)
+		done <- outcome{raw, err}
+	}()
+
+	select {
+	case r := <-done:
+		return r.raw, r.err
+	case <-ctx.Done():
+		// Killing the server closes the pipe, which releases the reader. Wait
+		// (briefly) for it so the scanner is never read by two goroutines.
+		c.killServer()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		return nil, fmt.Errorf("mcp %s: %w", method, ctx.Err())
+	}
 }
 
 func (c *Client) Initialize(ctx context.Context) error {
@@ -161,8 +219,5 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 }
 
 func (c *Client) Close() {
-	if c.cmd != nil && c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-		_ = c.cmd.Wait()
-	}
+	c.killServer()
 }

@@ -82,34 +82,9 @@ func (r *Registry) Names() []string {
 
 func DefaultRegistry(workdir string) *Registry {
 	r := NewRegistry()
-	r.Add(&ReadTool{})
-	r.Add(&ChangesTool{Workdir: workdir})
-	r.Add(&GrepTool{})
-	r.Add(&GlobTool{})
-	r.Add(&WriteTool{Workdir: workdir})
-	r.Add(&CreateTool{Workdir: workdir})
-	r.Add(&AddTool{Workdir: workdir})
-	r.Add(&EditTool{Workdir: workdir})
-	r.Add(&RemoveTool{Workdir: workdir})
-	r.Add(&SummaryTool{})
-	r.Add(NewBashTool(workdir))
-	r.Add(&GitTool{Workdir: workdir})
-	r.Add(&GitHubTool{Workdir: workdir})
-	r.Add(&BrowserTool{})
-	r.Add(&TestGenTool{Workdir: workdir})
-	r.Add(&SecurityTool{Workdir: workdir})
-	r.Add(&TreeTool{})
-	r.Add(&TodoTool{Workdir: workdir})
-	r.Add(&MemoryTool{})
-	r.Add(&PatchTool{Workdir: workdir})
-	r.Add(&RunTool{Workdir: workdir})
-	r.Add(&DeleteTool{Workdir: workdir})
-	r.Add(&ModelsTool{Workdir: workdir})
-	r.Add(&DBTool{})
-	r.Add(&NotebookTool{Workdir: workdir})
-	r.Add(&APITool{})
-	r.Add(&VSCodeTool{Workdir: workdir})
-	r.Add(&ScaffoldTool{Workdir: workdir})
+	for _, e := range catalog {
+		r.Add(e.build(workdir))
+	}
 	return r
 }
 

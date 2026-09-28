@@ -31,13 +31,18 @@ func TestTimeoutForKnowsLongTools(t *testing.T) {
 		"api":      30 * time.Second,
 		"browser":  30 * time.Second,
 		"git":      60 * time.Second,
-		"read":     defaultToolTimeout,
+		"read":     30 * time.Second,
 		"newthing": defaultToolTimeout,
 	}
 	for name, want := range short {
 		if got := TimeoutFor(name); got != want {
 			t.Fatalf("TimeoutFor(%q) = %s, want %s", name, got, want)
 		}
+	}
+	// A built-in tool declares its own budget; only an unrecognised name falls
+	// back to the default. Reading a file is not a two-minute operation.
+	if got := TimeoutFor("read"); got == defaultToolTimeout {
+		t.Fatal("read should declare its own budget, not inherit the default")
 	}
 	// Nothing may be unbounded.
 	for _, n := range []string{"", "read", "bash", "testgen", "mcp__x__y"} {

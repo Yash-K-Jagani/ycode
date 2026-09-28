@@ -4,53 +4,23 @@ import "strings"
 
 // Network policy.
 //
-// Zero-Data-Leak mode is a guardrail, and until now it was enforced in three
-// places (browser, git, github) out of twenty-eight tools, while the UI banner
-// claimed "local only" and told the model nothing could reach the network. Tools
-// that obviously could — api, the database drivers, the notebook runner,
+// Zero-Data-Leak mode is a guardrail. It used to be enforced in three places
+// (browser, git, github) out of twenty-eight tools, while the UI banner claimed
+// "local only" and told the model nothing could reach the network. Tools that
+// obviously could — api, the database drivers, the notebook runner,
 // scaffolding, every MCP and plugin tool — sailed straight through, so the
 // promise was false and, worse, the model was misinformed.
 //
-// The classification now lives here, in one place, and is enforced centrally in
-// the agent loop before any tool runs. A new tool cannot forget to declare
-// itself: the loop asks this table, and a name that is not listed is assumed
-// local.
+// The classification now lives in the tool catalog, in the same row that
+// registers the tool, and is enforced centrally in the agent loop before any
+// tool runs. A new tool cannot forget to declare itself: there is nowhere else
+// to declare it.
 //
 // What this is not: a sandbox. bash and run execute arbitrary commands, so a
 // determined (or careless) `bash curl ...` still leaves the machine. Blocking
 // every tool that could reach a socket would mean blocking all real work, so
-// the direct channels are closed and the residual risk is documented in the
-// banner and in docs/security.md.
-var networkTools = map[string]bool{
-	"api":      true, // arbitrary HTTP methods and bodies
-	"browser":  true, // fetches and extracts arbitrary URLs
-	"github":   true, // GitHub API
-	"git":      true, // fetch/push
-	"db":       true, // postgres/mysql/mongo can be remote hosts
-	"notebook": true, // executes arbitrary code
-	"scaffold": true, // npm/pip installs from remote registries
-	"vscode":   true, // shells out to the editor
-	"memory":   false,
-	"run":      false, // executes code: documented residual risk, see above
-	"bash":     false, // executes commands: documented residual risk, see above
-	"testgen":  false, // runs the project's own tests
-	"security": false,
-	"models":   false,
-	"todo":     false,
-	"summary":  false,
-	"changes":  false,
-	"read":     false,
-	"grep":     false,
-	"glob":     false,
-	"tree":     false,
-	"write":    false,
-	"create":   false,
-	"add":      false,
-	"edit":     false,
-	"remove":   false,
-	"delete":   false,
-	"patch":    false,
-}
+// the direct channels are closed and the residual risk is recorded in the
+// catalog row, the banner, and docs/security.md.
 
 // ReachesNetwork reports whether a tool can send data off the machine.
 //
@@ -61,17 +31,23 @@ func ReachesNetwork(name string) bool {
 	if strings.HasPrefix(name, "mcp__") || strings.HasPrefix(name, "plugin__") {
 		return true
 	}
-	// An unlisted tool is assumed local: that way adding a new tool is safe by
-	// default, and only tools that genuinely reach out need declaring.
-	return networkTools[name]
+	if e := entryFor(name); e != nil {
+		return e.network
+	}
+	// A name with no catalog row is not a built-in tool. An unrecognised name
+	// is assumed local, so a newly registered external tool is usable by
+	// default and only has to be declared if it genuinely reaches out.
+	return false
 }
 
-// NetworkTools lists the declared network-capable tools, for diagnostics.
+// NetworkTools lists the built-in tools that can reach the network, for the
+// banner and for `doctor`. MCP and plugin tools are not listed because they are
+// only known at runtime; they are covered by the prefix rule in ReachesNetwork.
 func NetworkTools() []string {
-	out := make([]string, 0, len(networkTools))
-	for n, yes := range networkTools {
-		if yes {
-			out = append(out, n)
+	var out []string
+	for _, e := range catalog {
+		if e.network {
+			out = append(out, e.name)
 		}
 	}
 	return out

@@ -713,7 +713,9 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 	turnStart := time.Now()
 	turn := func() tea.Msg {
 		ctx := turnCtx
-		if mode == modes.Plan {
+		// Read-only is a property of the mode, not a hardcoded exception for
+		// plan; a new read-only mode gets it for free.
+		if modes.IsReadOnly(mode) {
 			ctx = tools.WithReadOnly(ctx)
 		}
 		zdl := m.cfg.ZeroDataLeak

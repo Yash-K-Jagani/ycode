@@ -5,6 +5,8 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
+
+	"github.com/Yash-K-Jagani/ycode/internal/modes"
 )
 
 type slashItem struct {
@@ -13,7 +15,7 @@ type slashItem struct {
 }
 
 func slashList() []slashItem {
-	return []slashItem{
+	list := []slashItem{
 		{"/help", "commands & shortcuts"},
 		{"/exit", "quit (state saved)"},
 		{"/export", "export transcript"},
@@ -28,25 +30,31 @@ func slashList() []slashItem {
 		{"/agent", "pick an agent"},
 		{"/init", "scaffold .ycode"},
 		{"/editor", "open $EDITOR"},
-		{"/plan", "plan mode"},
-		{"/goal", "goal mode: run unattended"},
-		{"/build", "build mode"},
-		{"/chat", "chat mode"},
-		{"/thinking", "thinking mode"},
-		{"/tools", "list available tools"},
-		{"/undo", "restore last file change"},
-		{"/review", "AI review of diff"},
-		{"/test", "run project tests"},
-		{"/refactor", "safe refactoring"},
-		{"/rag", "local RAG search"},
-		{"/mcps", "MCP servers"},
-		{"/skills", "skills"},
-		{"/store", "skill/plugin store"},
-		{"/hooks", "configured hooks"},
-		{"/prompts", "prompt library"},
-		{"/plugins", "script plugins"},
-		{"/theme", "switch theme"},
 	}
+	// Mode entries come from the registry, so a new mode shows up in the
+	// palette without anyone remembering to add it here.
+	for _, md := range modes.Order() {
+		hint := modes.Summary(md) + " mode"
+		if md == modes.Goal {
+			hint = "goal mode: run unattended"
+		}
+		list = append(list, slashItem{modes.Slash(md), hint})
+	}
+	return append(list,
+		slashItem{"/tools", "list available tools"},
+		slashItem{"/undo", "restore last file change"},
+		slashItem{"/review", "AI review of diff"},
+		slashItem{"/test", "run project tests"},
+		slashItem{"/refactor", "safe refactoring"},
+		slashItem{"/rag", "local RAG search"},
+		slashItem{"/mcps", "MCP servers"},
+		slashItem{"/skills", "skills"},
+		slashItem{"/store", "skill/plugin store"},
+		slashItem{"/hooks", "configured hooks"},
+		slashItem{"/prompts", "prompt library"},
+		slashItem{"/plugins", "script plugins"},
+		slashItem{"/theme", "switch theme"},
+	)
 }
 
 func iconFor(name string) string {
@@ -59,8 +67,12 @@ func iconFor(name string) string {
 		return "📁"
 	case strings.HasPrefix(name, "/review"), strings.HasPrefix(name, "/test"), strings.HasPrefix(name, "/refactor"), strings.HasPrefix(name, "/rag"):
 		return "🔍"
-	case strings.HasPrefix(name, "/plan"), strings.HasPrefix(name, "/goal"), strings.HasPrefix(name, "/build"), strings.HasPrefix(name, "/chat"), strings.HasPrefix(name, "/thinking"):
+	}
+	// Mode commands share one icon, from the registry.
+	if modes.SlashForCommand(name) != "" {
 		return "⚡"
+	}
+	switch {
 	case strings.HasPrefix(name, "/doctor"), strings.HasPrefix(name, "/status"), strings.HasPrefix(name, "/connect"), strings.HasPrefix(name, "/agent"):
 		return "🛠"
 	case strings.HasPrefix(name, "/theme"):

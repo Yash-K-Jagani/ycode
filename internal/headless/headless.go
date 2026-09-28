@@ -165,7 +165,7 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	trimmed, _ := yctx.Trim(msgs[1:], yctx.BudgetFor(cfg.ActiveModel)-1500)
 	msgs = append(msgs[:1], trimmed...)
 	hookset := hooks.Load()
-	if o.Mode == modes.Plan {
+	if modes.IsReadOnly(o.Mode) {
 		ctx = tools.WithReadOnly(ctx)
 	}
 	hookset.Fire(ctx, hooks.OnRequest, map[string]string{"mode": string(o.Mode), "workdir": o.Workdir, "headless": "true"})

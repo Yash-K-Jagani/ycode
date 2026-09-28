@@ -163,7 +163,14 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /theme\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /goal /build /chat /thinking (or Tab). Goals: /goal <text> runs unattended until GOAL MET or GOAL BLOCKED (Esc stops). Stop output: Ctrl+C / Esc.", nil
+			// Modes and the Tab cycle come from the registry, so this line
+			// cannot fall out of step with it.
+			var slashes []string
+			for _, md := range modes.Order() {
+				slashes = append(slashes, modes.Slash(md))
+			}
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /undo /model /theme\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: " +
+				strings.Join(slashes, " ") + " (or Tab: " + modes.TabCycle() + "). Goals: /goal <text> runs unattended until GOAL MET or GOAL BLOCKED (Esc stops). Stop output: Ctrl+C / Esc.", nil
 		},
 		"/tools": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			names := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)

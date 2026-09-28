@@ -707,7 +707,9 @@ func runCmd() *cobra.Command {
 			}
 		},
 	}
-	c.Flags().StringVar(&mode, "mode", "build", "chat|plan|build|goal|thinking")
+	// Derived from the mode registry, so the help cannot list a mode that
+	// does not exist or omit one that does.
+	c.Flags().StringVar(&mode, "mode", "build", strings.Join(modes.Names(), "|"))
 	c.Flags().StringVar(&agent, "agent", "builder", "agent name")
 	c.Flags().IntVar(&goalIters, "goal-iters", 0, "goal mode: max autonomous iterations (0 = default)")
 	return c
@@ -740,7 +742,7 @@ func batchCmd() *cobra.Command {
 			fmt.Println("queued", j.ID)
 		},
 	}
-	addCmd.Flags().String("mode", "build", "mode for the job (chat|plan|build|goal|thinking)")
+	addCmd.Flags().String("mode", "build", "mode for the job ("+strings.Join(modes.Names(), "|")+")")
 	clearCmd := &cobra.Command{
 		Use: "clear", Short: "Clear jobs (finished only by default)",
 		Run: func(cmd *cobra.Command, args []string) {

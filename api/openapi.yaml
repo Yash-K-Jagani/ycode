@@ -47,7 +47,9 @@ paths:
               required: [prompt]
               properties:
                 prompt: { type: string }
-                mode: { type: string, enum: [chat, plan, build, goal, thinking] }
+                # Keep in step with internal/modes specs (names are derived
+                # from that table; modes_test.go asserts the two agree).
+                mode: { type: string, enum: [plan, goal, build, chat, thinking] }
                 agent: { type: string }
                 workdir: { type: string }
                 goal_iters: { type: integer, description: goal mode only: max autonomous iterations }

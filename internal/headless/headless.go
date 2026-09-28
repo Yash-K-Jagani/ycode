@@ -16,6 +16,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/router"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
+	"github.com/Yash-K-Jagani/ycode/internal/webhooks"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -60,15 +61,70 @@ func (o *Options) withDefaults() {
 	}
 }
 
+// Outcome is how a run ended. It is only meaningful in goal mode, where a run
+// can finish without the goal being met — which the exit code and the HTTP API
+// both need to report, because "exited 0" previously meant "the model claimed
+// it was done" as readily as "the work is done".
+type Outcome string
+
+const (
+	// OutcomeNone is any non-goal run: there is no pass/fail notion.
+	OutcomeNone Outcome = ""
+	// OutcomeMet: the goal was met, and the evidence backed it.
+	OutcomeMet Outcome = "met"
+	// OutcomeBlocked: the model reported it could not continue.
+	OutcomeBlocked Outcome = "blocked"
+	// OutcomeExhausted: the iteration budget ran out with work still owed.
+	OutcomeExhausted Outcome = "budget_exhausted"
+	// OutcomeStalled: a turn ran with no tool calls, so nothing was done.
+	OutcomeStalled Outcome = "stalled"
+	// OutcomeCancelled: the caller cancelled the run.
+	OutcomeCancelled Outcome = "cancelled"
+	// OutcomeUnverified: the run ended while the goal was still active, for a
+	// reason not otherwise classified.
+	OutcomeUnverified Outcome = "unverified"
+)
+
+// ExitCode maps an outcome to a process exit status, for CI use.
+// 0 means the work is done; everything else is a distinct, documented failure.
+func (o Outcome) ExitCode() int {
+	switch o {
+	case OutcomeNone, OutcomeMet:
+		return 0
+	case OutcomeBlocked:
+		return 2
+	case OutcomeExhausted:
+		return 3
+	case OutcomeStalled:
+		return 4
+	case OutcomeCancelled:
+		return 5
+	default:
+		return 6
+	}
+}
+
 // Run executes a single headless turn: system prompt + optional tool loop.
 // In goal mode it instead runs the goal loop: repeated turns until the model
 // reports GOAL MET / GOAL BLOCKED or the iteration budget runs out.
 func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
+	answer, _, err := RunWithStatus(ctx, cfg, prompt, o)
+	return answer, err
+}
+
+// RunWithStatus is Run plus how the run ended, so callers that care (the CLI's
+// exit code, the HTTP API's response) can tell a met goal from a model that
+// merely claimed one.
+func RunWithStatus(ctx context.Context, cfg config.Config, prompt string, o Options) (string, Outcome, error) {
 	o.withDefaults()
 	if o.Mode == modes.Goal {
 		return runGoal(ctx, cfg, prompt, o)
 	}
-	return runTurn(ctx, cfg, prompt, o)
+	answer, err := runTurn(ctx, cfg, prompt, o)
+	if err != nil {
+		return answer, OutcomeNone, err
+	}
+	return answer, OutcomeNone, nil
 }
 
 func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
@@ -152,7 +208,7 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 // runGoal drives the autonomous goal loop headlessly: the goal text is the
 // prompt, and iterations continue until the model reports GOAL MET / GOAL
 // BLOCKED or MaxIter turns have run.
-func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
+func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (string, Outcome, error) {
 	o.withDefaults()
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
@@ -167,7 +223,7 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	r := router.New(cfg)
 	ag, ok := agents.Get(o.Agent)
 	if !ok {
-		return "", fmt.Errorf("unknown agent %q", o.Agent)
+		return "", OutcomeUnverified, fmt.Errorf("unknown agent %q", o.Agent)
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
 	allowed := modes.AllowedTools(o.Mode)
@@ -194,14 +250,15 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	for {
 		select {
 		case <-ctx.Done():
-			return last + "\n\n(stopped: " + ctx.Err().Error() + ")", ctx.Err()
+			g.Status = goal.Cancelled
+			return last + "\n\n(stopped: " + ctx.Err().Error() + ")\n" + g.StopNote(), OutcomeCancelled, ctx.Err()
 		default:
 		}
 		trimmed, _ := yctx.Trim(msgs[1:], yctx.BudgetFor(cfg.ActiveModel)-1500)
 		turnMsgs := append([]apitypes.Message{msgs[0]}, trimmed...)
 		p, model, err := r.Active()
 		if err != nil {
-			return "", err
+			return "", OutcomeUnverified, err
 		}
 		workOK := 0
 		res, err := agent.RunWithRounds(ctx, p, model, turnMsgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
@@ -214,7 +271,7 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 			_, _ = fmt.Fprintf(log, "[goal %d/%d tool %s] %s\n", g.Iter+1, g.MaxIter, name, status)
 		}, rounds, string(o.Mode))
 		if err != nil && res.Text == "" {
-			return "", err
+			return "", OutcomeUnverified, err
 		}
 		last = res.Text
 		audit.Log("goal_iteration", map[string]any{"iteration": g.Iter + 1, "prompt": g.Text, "answer": res.Text})
@@ -240,5 +297,32 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	hookset.Fire(ctx, hooks.OnResponse, map[string]string{"mode": string(o.Mode)})
 	audit.Log("headless_goal", map[string]any{"goal": g.Text, "status": string(g.Status), "iterations": g.Iter, "answer": last})
 	_, _ = fmt.Fprintf(log, "goal: %s\n", g.Summary())
-	return last + "\n\n" + g.StopNote(), nil
+	// Headless runs used to emit no webhooks at all, so a CI goal run was
+	// invisible to anything watching the session events. Skipped under
+	// Zero-Data-Leak, which is the point of that mode.
+	if !cfg.ZeroDataLeak {
+		webhooks.Fire("turn_complete", map[string]any{
+			"mode": string(o.Mode), "goal_status": string(g.Status),
+			"iterations": g.Iter, "goal": g.Text,
+		})
+	}
+	return last + "\n\n" + g.StopNote(), outcomeOf(g.Status), nil
+}
+
+// outcomeOf maps a terminal goal status to a caller-visible outcome.
+func outcomeOf(s goal.Status) Outcome {
+	switch s {
+	case goal.Met:
+		return OutcomeMet
+	case goal.Blocked:
+		return OutcomeBlocked
+	case goal.Spent:
+		return OutcomeExhausted
+	case goal.Stalled:
+		return OutcomeStalled
+	case goal.Cancelled:
+		return OutcomeCancelled
+	default:
+		return OutcomeUnverified
+	}
 }

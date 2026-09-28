@@ -690,12 +690,21 @@ func runCmd() *cobra.Command {
 				}
 			}
 			workdir, _ := os.Getwd()
-			answer, err := headless.Run(context.Background(), cfg, strings.Join(args, " "), headless.Options{Mode: m, Agent: agent, Workdir: workdir, Stderr: os.Stderr, GoalIters: goalIters})
+			answer, outcome, err := headless.RunWithStatus(context.Background(), cfg, strings.Join(args, " "), headless.Options{Mode: m, Agent: agent, Workdir: workdir, Stderr: os.Stderr, GoalIters: goalIters})
 			if err != nil {
+				fmt.Println(answer)
 				fmt.Println("error:", err)
 				os.Exit(1)
 			}
 			fmt.Println(answer)
+			// In goal mode the exit code is the result: 0 only when the work is
+			// actually done. A run that stalled, blocked or ran out of budget
+			// used to exit 0, so CI could not tell success from a model that
+			// merely said it was finished.
+			if code := outcome.ExitCode(); code != 0 {
+				fmt.Fprintf(os.Stderr, "\ngoal not met: %s (exit %d)\n", outcome, code)
+				os.Exit(code)
+			}
 		},
 	}
 	c.Flags().StringVar(&mode, "mode", "build", "chat|plan|build|goal|thinking")

@@ -19,8 +19,15 @@ import (
 )
 
 // newModelCmd builds a minimal Model for command/Update tests.
+//
+// It redirects the config directory to a temp home. applyModel — reached by the
+// model-switch path below — calls cfg.Save(), so without this the test would
+// overwrite the developer's real ~/.ycode/config.yaml with its fixtures.
 func newModelCmd(t *testing.T) *Model {
 	t.Helper()
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	t.Setenv("HOME", home)        // and on unix
 	ta := textarea.New()
 	ta.SetHeight(1)
 	cfg := config.Defaults()

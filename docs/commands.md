@@ -46,5 +46,30 @@ clears it (goals are not persisted).
 The task list is the goal's own: `/goal` clears the previous one so a stale
 step list can't send the run down the wrong path.
 
+A claimed `GOAL MET` is checked, not believed: it only counts if a tool that
+changes something actually succeeded, nothing errored, and the task list is
+closed. Otherwise the claim is rejected, the reason is shown, and the run
+continues.
+
+### Goal mode exit codes (changed in v0.13)
+
+`ycode run --mode goal` used to exit 0 whatever happened, so a CI job could not
+tell a finished job from a model that merely said it was finished. It now exits
+with the result:
+
+| Code | Meaning |
+|---|---|
+| 0 | the goal is met (or this was not a goal run) |
+| 2 | `GOAL BLOCKED` — the model could not continue |
+| 3 | the iteration budget ran out with work still owed |
+| 4 | stalled — a turn made no tool calls, so nothing was done |
+| 5 | cancelled (timeout or interrupt) |
+| 6 | ended while the goal was still active, unclassified |
+| 1 | a hard error (bad config, no provider, unknown agent) |
+
+Migration: if you gate CI on `ycode run --mode goal`, treat anything non-zero as
+"not done". Nothing else changes, and non-goal modes still exit 0 on success.
+`POST /v1/chat` also returns `goal_status` so a client can distinguish them.
+
 Type `@` in the input for path completion — attached files are inlined into
 your message (24KB each, 5 max; `@dir` attaches a listing).

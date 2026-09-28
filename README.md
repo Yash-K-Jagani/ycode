@@ -184,10 +184,17 @@ Switch with `Tab` or `/plan` `/goal` `/build` `/chat` `/thinking`. The agent fla
 immediately. The agent turns the goal into acceptance criteria, records them in
 the todo list, and works one step per iteration without asking you anything. It
 ends the run itself with `GOAL MET` (evidence per criterion) or
-`GOAL BLOCKED: <reason>`, or stops when the 12-iteration budget is spent. The
-sidebar and `/status` show the goal, the iteration counter, and the task list;
-`Esc` stops a run. Goals live in the session only — `/new` clears them — and
-`ycode run --mode goal "…"` runs the same loop headlessly (`--goal-iters` caps it).
+`GOAL BLOCKED: <reason>`, or stops when the 12-iteration budget is spent. A
+claimed `GOAL MET` is **checked, not believed** — it only counts if a tool that
+changes something succeeded, nothing errored, and the task list is closed.
+The sidebar and `/status` show the goal, the iteration counter and the task
+list; `Esc` stops a run. Goals live in the session only — `/new` clears them.
+
+Headless, `ycode run --mode goal "…"` runs the same loop and **exits with the
+result**: `0` met, `2` blocked, `3` budget exhausted, `4` stalled, `5`
+cancelled, `1` error (`--goal-iters` caps the budget). CI should treat
+non-zero as "not done"; this is a change from earlier versions, which always
+exited 0.
 
 ---
 
@@ -237,6 +244,7 @@ ycode status             # provider health, models, cost today
 ycode version            # version + commit + date + os/arch
 ycode doctor [--fix]     # environment self-check
 ycode run "task" [--mode build|plan|goal|chat] [--agent builder] [--goal-iters N]
+                                          # goal mode: exit 0 met, 2 blocked, 3 budget, 4 stalled
 ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
 ycode batch add|list|run|clear        # offline job queue
 ycode store list|search|install|remove|verify|update # curated skill/plugin store

@@ -92,10 +92,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
-	answer, err := headless.Run(ctx, cfg, req.Prompt, headless.Options{Mode: mode, Agent: req.Agent, Workdir: req.Workdir, GoalIters: req.GoalIters})
+	answer, outcome, err := headless.RunWithStatus(ctx, cfg, req.Prompt, headless.Options{Mode: mode, Agent: req.Agent, Workdir: req.Workdir, GoalIters: req.GoalIters})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	writeJSON(w, map[string]any{"answer": answer})
+	// Report how a goal run ended, so a client can tell a met goal from a
+	// model that only claimed one.
+	writeJSON(w, map[string]any{"answer": answer, "goal_status": string(outcome)})
 }

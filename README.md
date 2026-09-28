@@ -323,7 +323,10 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
 - `git commit` via the agent is blocked on secret patterns (override `force`).
 - Tool results/URLs are injection-scanned with an untrusted-data note.
 - **`zero_data_leak: true`** (`~/.ycode/config.yaml`): cloud providers and
-  fallbacks hard-blocked, `browser`/`github` refused, red `[LOCAL ONLY]` badge.
+  fallbacks hard-blocked, plus every tool that reaches the network (`api`,
+  `browser`, `github`, `git`, `db`, `notebook`, `scaffold`, `vscode`, all
+  `mcp__*`/`plugin__*`), red `[LOCAL ONLY]` badge. A guardrail, not a sandbox:
+  `bash`/`run` still execute arbitrary commands. See `docs/security.md`.
 - Full model: `docs/security.md`.
 
 ---

@@ -122,6 +122,42 @@ func TestAllProvidersFailedNamesEveryAttempt(t *testing.T) {
 	}
 }
 
+// The allow-list filter and the agent loop's central check read the same
+// table now; this guards the wiring. It previously hardcoded exactly two names
+// (browser, github) while nine more tools could reach the network.
+func TestFilterNetworkToolsMatchesPolicy(t *testing.T) {
+	in := []string{
+		"read", "api", "write", "browser", "github", "git", "db", "notebook",
+		"scaffold", "vscode", "mcp__srv__tool", "plugin__mine", "grep", "todo",
+		"run", "bash", "testgen",
+	}
+	got := filterNetworkTools(in)
+	for _, n := range got {
+		if tools.ReachesNetwork(n) {
+			t.Fatalf("%s reaches the network but survived the filter", n)
+		}
+	}
+	wantLocal := []string{"read", "write", "grep", "todo", "run", "bash", "testgen"}
+	for _, n := range wantLocal {
+		found := false
+		for _, g := range got {
+			if g == n {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s is local but was filtered out: %v", n, got)
+		}
+	}
+	for _, n := range []string{"api", "browser", "github", "git", "db", "notebook", "scaffold", "vscode", "mcp__srv__tool", "plugin__mine"} {
+		for _, g := range got {
+			if g == n {
+				t.Fatalf("%s reaches the network but survived the filter", n)
+			}
+		}
+	}
+}
+
 func TestModelSwitchIgnoredWhileBusy(t *testing.T) {
 	m := newModelCmd(t)
 	m.busy = true

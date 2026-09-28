@@ -187,6 +187,9 @@ func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs
 	if rounds <= 0 {
 		rounds = MaxRounds
 	}
+	if w == nil {
+		w = io.Discard
+	}
 	allow := map[string]bool{}
 	for _, n := range allowed {
 		allow[n] = true
@@ -300,6 +303,12 @@ func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs
 func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call) (string, error) {
 	if !allow[c.Name] {
 		return "", fmt.Errorf("tool %q not allowed in this mode", c.Name)
+	}
+	// Central network policy. Enforced here rather than in each tool so a
+	// newly added tool cannot forget the check: tools/network.go is the single
+	// declaration of what reaches the network.
+	if tools.IsZeroLeak(ctx) && tools.ReachesNetwork(c.Name) {
+		return "", tools.BlockNetworkReason(c.Name)
 	}
 	t, ok := reg.Get(c.Name)
 	if !ok {

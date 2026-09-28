@@ -818,7 +818,9 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		allowed := modes.AllowedTools(mode, append(mcpNames, m.pluginNames...)...)
 		if zdl {
 			allowed = filterNetworkTools(allowed)
-			sys += "\nZERO-DATA-LEAK: local only. No cloud providers, no browser, no GitHub API."
+			sys += "\nZERO-DATA-LEAK: local only. Cloud providers are blocked, and so is every tool that reaches the network " +
+				"(api, browser, github, git, db, notebook, scaffold, mcp__*, plugin__*). " +
+				"bash and run still execute arbitrary commands, so treat this as a guardrail against accidents, not a sandbox."
 			msgs[0].Content = sys
 		}
 		notes := []string{fmt.Sprintf("~%d tokens", promptTok)}
@@ -1568,10 +1570,14 @@ func (m Model) View() string {
 	return base
 }
 
+// filterNetworkTools drops every tool that can reach the network, in
+// Zero-Data-Leak mode. Derived from tools.ReachesNetwork so this list and the
+// loop's central check cannot drift apart — it previously hardcoded exactly two
+// names while nine more could reach the network.
 func filterNetworkTools(names []string) []string {
 	var out []string
 	for _, n := range names {
-		if n == "browser" || n == "github" {
+		if tools.ReachesNetwork(n) {
 			continue
 		}
 		out = append(out, n)

@@ -48,6 +48,9 @@ type Client struct {
 	dead atomic.Bool
 	// kill is idempotent: it guards the kill/wait in the timeout path.
 	killOnce sync.Once
+	// closeHook is a test seam for observing that Close was reached. It is nil
+	// in production and costs one branch on a path that already does a kill.
+	closeHook func()
 }
 
 func Start(command string, args []string, env map[string]string) (*Client, error) {
@@ -225,4 +228,7 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 
 func (c *Client) Close() {
 	c.killServer()
+	if c.closeHook != nil {
+		c.closeHook()
+	}
 }

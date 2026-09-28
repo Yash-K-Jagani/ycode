@@ -46,6 +46,12 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Without this, a 401 decodes as an empty catalogue and the user is told
+	// they have no models, when the truth is that their key was rejected.
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("%s %d: %s", c.Name_, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
 	var v struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -81,8 +87,8 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return apitypes.StreamChunk{}, fmt.Errorf("%s %d: %s", c.Name_, resp.StatusCode, string(b))
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return apitypes.StreamChunk{}, fmt.Errorf("%s %d: %s", c.Name_, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	var full strings.Builder
 	sc := bufio.NewScanner(resp.Body)

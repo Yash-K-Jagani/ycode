@@ -10,3 +10,4 @@
   - Embeddings/RAG stay local via Ollama.
   - **This is a guardrail against accidents, not a sandbox.** `bash` and `run` execute arbitrary commands, so `bash curl …` still leaves the machine; they are deliberately not blocked because doing so would make the mode useless for real work. Treat the badge as "ycode will not send your data anywhere itself".
 - **Sandboxing**: `bash` has a destructive-command denylist, 60s timeout, 32KB output cap, project-dir cwd.
+- **Path containment**: `write`, `create`, `add`, `edit` and `delete` confine paths to the workdir and refuse to write inside `.git`, so a relative path like `../../.config/app` cannot land outside the project. `delete` keeps a documented `force: true` escape hatch for a path the user named deliberately; the write tools do not, because there the flag would be the model's own permission. Build mode also has `bash`, so this is a rail against ordinary path mistakes, not a sandbox against a determined model.

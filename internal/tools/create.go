@@ -33,7 +33,13 @@ func (t *CreateTool) Run(ctx context.Context, args json.RawMessage) (string, err
 	if a.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	p := resolve(t.Workdir, a.Path)
+	p, err := containPath(t.Workdir, a.Path, false)
+	if err != nil {
+		return "", err
+	}
+	if err := guardGitKeep(p); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(p); err == nil {
 		return "", fmt.Errorf("exists (use edit to change it, write to overwrite): %s", p)
 	}

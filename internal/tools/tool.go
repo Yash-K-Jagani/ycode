@@ -122,11 +122,60 @@ func decodeArgs(raw json.RawMessage, v any) error {
 
 // --- shared helpers (one copy used by all file tools) ---
 
+// resolve turns a model-supplied path into an absolute-ish one. It does not
+// confine anything — see containPath for that.
 func resolve(workdir, p string) string {
 	if filepath.IsAbs(p) || workdir == "" {
 		return p
 	}
 	return filepath.Join(workdir, p)
+}
+
+// containPath confines a model-supplied path to the workdir.
+//
+// Only delete did this, and its guard could be switched off by the model
+// passing force:true — which its own description advertised. write, create,
+// add and edit had no check at all, so "../../../../home/u/.config/x" wrote
+// outside the project and nothing stopped a write into .git/hooks. Build mode
+// also has bash, so this is not a privilege boundary against a determined
+// model; it is a rail against the ordinary mistake of a relative path
+// escaping, which is exactly the case that loses someone's work silently.
+//
+// allowEscape overrides it, for the cases that legitimately reach outside:
+// an absolute path the user asked for.
+func containPath(workdir, raw string, allowEscape bool) (string, error) {
+	p := resolve(workdir, raw)
+	clean := filepath.Clean(p)
+	if workdir == "" || allowEscape {
+		return clean, nil
+	}
+	wd, err := filepath.Abs(workdir)
+	if err != nil {
+		return clean, nil // cannot judge; do not block
+	}
+	abs, err := filepath.Abs(clean)
+	if err != nil {
+		return clean, nil
+	}
+	rel, err := filepath.Rel(wd, abs)
+	if err != nil {
+		return "", fmt.Errorf("refusing path outside the workdir: %s", raw)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing to touch %s: outside the workdir (%s) — use a path inside the project", raw, workdir)
+	}
+	return abs, nil
+}
+
+// guardGitKeep blocks writes into .git, where a stray file can turn into a
+// hook the user never wrote.
+func guardGitKeep(p string) error {
+	for _, seg := range strings.Split(filepath.Clean(p), string(filepath.Separator)) {
+		if seg == ".git" {
+			return fmt.Errorf("refusing to write inside .git: %s", p)
+		}
+	}
+	return nil
 }
 
 func splitLines(s string) []string {

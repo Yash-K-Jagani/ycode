@@ -33,7 +33,13 @@ func (t *AddTool) Run(ctx context.Context, args json.RawMessage) (string, error)
 	if a.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	p := resolve(t.Workdir, a.Path)
+	p, err := containPath(t.Workdir, a.Path, false)
+	if err != nil {
+		return "", err
+	}
+	if err := guardGitKeep(p); err != nil {
+		return "", err
+	}
 	var old []string
 	if data, err := os.ReadFile(p); err == nil {
 		old = splitLines(string(data))

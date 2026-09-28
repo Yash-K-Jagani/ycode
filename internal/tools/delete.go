@@ -43,26 +43,24 @@ func removePath(ctx context.Context, workdir, rawPath string, recursive, force b
 	if strings.TrimSpace(rawPath) == "" {
 		return "", fmt.Errorf("path required")
 	}
-	p := resolve(workdir, rawPath)
-	clean := filepath.Clean(p)
+	// force is the documented escape hatch for a path the user deliberately
+	// asked for. It stays for delete (removing a file the user named) but no
+	// longer applies to the write tools, where "force" is a word a model
+	// chooses and would then be its own permission.
+	clean, err := containPath(workdir, rawPath, force)
+	if err != nil {
+		return "", err
+	}
 	if workdir != "" {
-		wd, err := filepath.Abs(workdir)
-		if err == nil {
-			rel, err := filepath.Rel(wd, clean)
-			if err != nil || rel == "." {
+		wd, absErr := filepath.Abs(workdir)
+		if absErr == nil {
+			if rel, relErr := filepath.Rel(wd, clean); relErr == nil && rel == "." {
 				return "", fmt.Errorf("refusing to delete the workdir itself")
-			}
-			if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				if !force {
-					return "", fmt.Errorf("refusing path outside workdir (use force:true to override): %s", rawPath)
-				}
 			}
 		}
 	}
-	for _, seg := range strings.Split(clean, string(filepath.Separator)) {
-		if seg == ".git" {
-			return "", fmt.Errorf("refusing to delete .git content")
-		}
+	if err := guardGitKeep(clean); err != nil {
+		return "", fmt.Errorf("refusing to delete .git content")
 	}
 	fi, err := os.Stat(clean)
 	if err != nil {

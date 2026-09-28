@@ -32,10 +32,19 @@ func (t *EditTool) Run(ctx context.Context, args json.RawMessage) (string, error
 	if IsReadOnly(ctx) {
 		return "", fmt.Errorf("edit is blocked in read-only mode")
 	}
-	p := resolve(t.Workdir, a.Path)
-	data, err := os.ReadFile(p)
+	if a.Path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	p, err := containPath(t.Workdir, a.Path, false)
 	if err != nil {
 		return "", err
+	}
+	if err := guardGitKeep(p); err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", a.Path, err)
 	}
 	s := string(data)
 	actual := a.OldString

@@ -28,7 +28,7 @@ func TestModelsParsesTheBody(t *testing.T) {
 		if r.URL.Path != "/v1/models" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		io.WriteString(w, `{"models":[{"id":"qwen2.5-coder:3b"}]}`)
+		_, _ = io.WriteString(w, `{"models":[{"id":"qwen2.5-coder:3b"}]}`)
 	})
 	got, err := c.Models()
 	if err != nil {
@@ -48,7 +48,7 @@ func TestModelsParsesTheBody(t *testing.T) {
 
 func TestStatusParsesTheBody(t *testing.T) {
 	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `{"provider":"ollama","model":"qwen2.5-coder:3b"}`)
+		_, _ = io.WriteString(w, `{"provider":"ollama","model":"qwen2.5-coder:3b"}`)
 	})
 	got, err := c.Status()
 	if err != nil {
@@ -70,7 +70,7 @@ func TestChatReturnsTheAnswerAndGoalStatus(t *testing.T) {
 		}
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &body)
-		io.WriteString(w, `{"answer":"added the endpoint","goal_status":"met"}`)
+		_, _ = io.WriteString(w, `{"answer":"added the endpoint","goal_status":"met"}`)
 	})
 	answer, status, err := c.Chat("add /healthz", "goal", "wizard", "/tmp")
 	if err != nil {
@@ -96,7 +96,7 @@ func TestChatReturnsTheAnswerAndGoalStatus(t *testing.T) {
 func TestErrorStatusNamesThePathAndTheServerMessage(t *testing.T) {
 	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		io.WriteString(w, `{"error":"bearer token required for a non-loopback bind"}`)
+		_, _ = io.WriteString(w, `{"error":"bearer token required for a non-loopback bind"}`)
 	})
 	_, _, err := c.Chat("hi", "build", "", "")
 	if err == nil {
@@ -115,17 +115,21 @@ func TestTokenIsSentAsABearerHeader(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Get("Authorization")
-		io.WriteString(w, `{}`)
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
 
-	NewWithToken(srv.URL, "secret-token").Health()
+	if err := NewWithToken(srv.URL, "secret-token").Health(); err != nil {
+		t.Fatal(err)
+	}
 	if got != "Bearer secret-token" {
 		t.Fatalf("Authorization = %q", got)
 	}
 	// And an explicit token wins over the environment.
 	t.Setenv("YCODE_API_TOKEN", "from-env")
-	NewWithToken(srv.URL, "secret-token").Health()
+	if err := NewWithToken(srv.URL, "secret-token").Health(); err != nil {
+		t.Fatal(err)
+	}
 	if got != "Bearer secret-token" {
 		t.Fatalf("Authorization = %q, the explicit token should win", got)
 	}
@@ -163,11 +167,13 @@ func TestNoTokenSendsNoHeader(t *testing.T) {
 	var present bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, present = r.Header["Authorization"]
-		io.WriteString(w, `{}`)
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
 
-	New(srv.URL).Health()
+	if err := New(srv.URL).Health(); err != nil {
+		t.Fatal(err)
+	}
 	if present {
 		t.Fatal("a header was sent with no token; a loopback server should not see one")
 	}
@@ -191,10 +197,12 @@ func TestBaseTrailingSlashIsTrimmed(t *testing.T) {
 	var path string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
-		io.WriteString(w, `{}`)
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer srv.Close()
-	New(srv.URL + "/").Health()
+	if err := New(srv.URL + "/").Health(); err != nil {
+		t.Fatal(err)
+	}
 	if path != "/healthz" {
 		t.Fatalf("path = %q, want /healthz", path)
 	}
@@ -210,7 +218,7 @@ func TestUnreachableServerIsAnError(t *testing.T) {
 // Malformed JSON is a bug in the server, and must not read as success.
 func TestMalformedResponseIsAnError(t *testing.T) {
 	c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, `not json at all`)
+		_, _ = io.WriteString(w, `not json at all`)
 	})
 	got, err := c.Models()
 	if err == nil {

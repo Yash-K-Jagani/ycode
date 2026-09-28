@@ -35,12 +35,17 @@ type Client struct {
 	scan   *bufio.Scanner
 	mu     sync.Mutex
 	nextID int64
-	born   time.Time
 	// dead is set once the server is killed or its pipe breaks. The scanner
 	// is not safe to reuse after an interrupted read, and a server that has
 	// stopped answering will not start again, so every later call fails fast
 	// instead of blocking.
-	dead bool
+	//
+	// It is atomic rather than guarded by mu because the writers cannot all
+	// hold the lock: readResponse runs on its own goroutine, and Close is
+	// called without the lock. A plain bool raced with call's check, which
+	// the race detector caught: a call after a timeout read it while the
+	// previous reader goroutine was still writing it.
+	dead atomic.Bool
 	// kill is idempotent: it guards the kill/wait in the timeout path.
 	killOnce sync.Once
 }
@@ -62,7 +67,7 @@ func Start(command string, args []string, env map[string]string) (*Client, error
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	c := &Client{cmd: cmd, born: time.Now()}
+	c := &Client{cmd: cmd}
 	c.stdin = *json.NewEncoder(stdin)
 	c.scan = bufio.NewScanner(stdout)
 	c.scan.Buffer(make([]byte, 1024*1024), 8*1024*1024)
@@ -75,7 +80,7 @@ const callTimeout = 60 * time.Second
 // killServer stops the process, which is the only portable way to unblock a
 // read on its stdout pipe.
 func (c *Client) killServer() {
-	c.dead = true
+	c.dead.Store(true)
 	c.killOnce.Do(func() {
 		if c.cmd != nil && c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
@@ -103,7 +108,7 @@ func (c *Client) readResponse(id int64, method string) (json.RawMessage, error) 
 		}
 		return resp.Result, nil
 	}
-	c.dead = true
+	c.dead.Store(true)
 	if err := c.scan.Err(); err != nil {
 		return nil, err
 	}
@@ -114,7 +119,7 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	id := atomic.AddInt64(&c.nextID, 1)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.dead {
+	if c.dead.Load() {
 		return nil, fmt.Errorf("mcp %s: server is not running (restart it with /mcps tools)", method)
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -123,7 +128,7 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		defer cancel()
 	}
 	if err := c.stdin.Encode(rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}); err != nil {
-		c.dead = true
+		c.dead.Store(true)
 		return nil, fmt.Errorf("mcp %s: %w", method, err)
 	}
 

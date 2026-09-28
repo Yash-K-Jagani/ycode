@@ -83,12 +83,17 @@ func (c *Client) do(method, path string, body any, out any) error {
 
 func (c *Client) Models() (map[string]any, error) {
 	var v map[string]any
-	return v, c.do(http.MethodGet, "/v1/models", nil, &v)
+	// The error is checked before v is returned on purpose. `return v, c.do(…)`
+	// reads v at the same time as the call fills it, and Go does not order a
+	// variable read against a function call, so it happened to work only.
+	err := c.do(http.MethodGet, "/v1/models", nil, &v)
+	return v, err
 }
 
 func (c *Client) Status() (map[string]any, error) {
 	var v map[string]any
-	return v, c.do(http.MethodGet, "/v1/status", nil, &v)
+	err := c.do(http.MethodGet, "/v1/status", nil, &v)
+	return v, err
 }
 
 // Chat runs one turn. goalStatus is empty for non-goal modes, and otherwise

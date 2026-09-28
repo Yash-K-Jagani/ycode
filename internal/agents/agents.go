@@ -16,7 +16,11 @@ func All() []Agent {
 	}
 }
 
+// Get looks an agent up by name, tolerating case and surrounding whitespace:
+// /agent offers a picker, but the HTTP API takes whatever string the caller
+// sends.
 func Get(name string) (Agent, bool) {
+	name = strings.TrimSpace(name)
 	for _, a := range All() {
 		if strings.EqualFold(a.Name, name) {
 			return a, true

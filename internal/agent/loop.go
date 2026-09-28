@@ -329,7 +329,14 @@ func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, h
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	// The cap is per tool, not one global 90s: several tools legitimately
+	// need minutes (a build, a test suite, a package install), and a blanket
+	// 90s killed them mid-flight and reported "context deadline exceeded".
+	timeout := tools.TimeoutFor(c.Name)
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out, err := t.Run(ctx, c.Args)
 	if hk != nil {

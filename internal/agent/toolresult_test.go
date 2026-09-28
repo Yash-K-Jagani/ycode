@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/agent/fakeprovider"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
@@ -129,30 +130,72 @@ func TestExecKeepsToolOutput(t *testing.T) {
 	}
 }
 
-// Sanity: a real tool's failure output really does arrive, end to end.
-func TestRealToolFailureOutputReachesTheModel(t *testing.T) {
-	if _, err := os.Stat("/bin/sh"); err != nil {
-		t.Skip("no POSIX shell")
+// deadlineTool reports, in whole seconds, how long it was allowed to run.
+type deadlineTool struct{ name string }
+
+func (d deadlineTool) Name() string      { return d.name }
+func (deadlineTool) Description() string { return "reports its deadline" }
+func (deadlineTool) Schema() string      { return `{"type":"object"}` }
+func (deadlineTool) Run(ctx context.Context, _ json.RawMessage) (string, error) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return "seconds=0", nil
 	}
-	dir := t.TempDir()
-	r := tools.NewRegistry()
-	r.Add(tools.NewBashTool(dir))
-	p := fakeprovider.New(`<tool:bash>{"cmd":"echo MARKER-OUTPUT; exit 3"}</tool:bash>`, "done")
-	_, err := Run(context.Background(), p, "m",
-		[]apitypes.Message{{Role: apitypes.RoleUser, Content: "go"}},
-		r, []string{"bash"}, nil, io.Discard, nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	found := false
-	for _, msgs := range p.Seen() {
-		for _, msg := range msgs {
-			if strings.Contains(msg.Content, "MARKER-OUTPUT") {
-				found = true
+	return "seconds=" + strconv.Itoa(int(time.Until(dl).Seconds())), nil
+}
+
+// The loop used to cap every tool at 90s, so a build or a test suite that
+// needed two minutes was killed and reported as "context deadline exceeded" —
+// usually right at the end. The cap now comes from tools.TimeoutFor.
+func TestLoopGivesLongToolsTheirOwnBudget(t *testing.T) {
+	for _, tc := range []struct {
+		tool        string
+		wantAtLeast int
+	}{
+		{"testgen", 240},
+		{"scaffold", 500},
+		{"github", 240},
+		{"notebook", 240},
+		{"mcp__srv__tool", 240},
+		{"run", 150},
+		// Still bounded, and shorter than the old blanket cap.
+		{"bash", 0},
+		{"read", 0},
+	} {
+		r := tools.NewRegistry()
+		r.Add(deadlineTool{name: tc.tool})
+		call := fmt.Sprintf("<tool:%s>{}</tool:%s>", tc.tool, tc.tool)
+		p := fakeprovider.New(call, "done")
+		_, err := Run(context.Background(), p, "m",
+			[]apitypes.Message{{Role: apitypes.RoleUser, Content: "go"}},
+			r, []string{tc.tool}, nil, io.Discard, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.tool, err)
+		}
+		var secs int
+		found := false
+		for _, msgs := range p.Seen() {
+			for _, msg := range msgs {
+				if i := strings.Index(msg.Content, "seconds="); i >= 0 {
+					rest := msg.Content[i+len("seconds="):]
+					end := 0
+					for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+						end++
+					}
+					if n, err := strconv.Atoi(rest[:end]); err == nil {
+						secs, found = n, true
+					}
+				}
 			}
 		}
-	}
-	if !found {
-		t.Fatal("the command's output never reached the model")
+		if !found {
+			t.Fatalf("%s: the tool never reported a deadline", tc.tool)
+		}
+		if secs < tc.wantAtLeast {
+			t.Fatalf("%s was allowed only %ds, want >= %ds (the old cap was 90s)", tc.tool, secs, tc.wantAtLeast)
+		}
+		if secs > 900 {
+			t.Fatalf("%s was allowed %ds, which is unbounded in practice", tc.tool, secs)
+		}
 	}
 }

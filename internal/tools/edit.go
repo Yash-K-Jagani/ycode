@@ -62,9 +62,13 @@ func (t *EditTool) Run(ctx context.Context, args json.RawMessage) (string, error
 	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
 		return "", err
 	}
-	_ = tryFormat(p)
-	out := fmt.Sprintf("edited %s\n```diff\n%s```",
-		p, diffBlock(splitLines(a.OldString), splitLines(a.NewString), 60))
+	note := tryFormat(p)
+	now := readFormatted(p)
+	if now == nil {
+		now = splitLines(a.NewString)
+	}
+	out := fmt.Sprintf("edited %s%s\n```diff\n%s```",
+		p, note, diffBlock(splitLines(a.OldString), now, 60))
 	return strings.TrimRight(out, "\n"), nil
 }
 

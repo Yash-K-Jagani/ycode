@@ -651,10 +651,20 @@ func slashRegistry() map[string]slashHandler {
 			}
 			force := strings.HasSuffix(goal, " force")
 			goal = strings.TrimSuffix(goal, " force")
-			raw, _ := json.Marshal(map[string]string{"action": "status"})
-			st, _ := (&tools.GitTool{Workdir: m.workdir}).Run(ctx, raw)
-			if strings.TrimSpace(st) != "" && st != "(clean)" && !force {
-				return "Working tree is dirty. Commit first or append 'force' — refactor runs on a checkpoint branch but dirty files complicate revert.", nil
+			// A git failure is not a clean tree. The old check compared the
+			// status string against "" and "(clean)", and a failing git call
+			// produced an empty string — so a missing git, a non-repo
+			// directory or a timeout let the refactor proceed over an
+			// uncommitted tree, which is exactly what the guard exists to stop.
+			if !tools.IsGitRepo(m.workdir) {
+				return "Refusing to refactor: " + m.workdir + " is not a git repository, so there is nothing to checkpoint or revert to. Run /init, or git init here.", nil
+			}
+			if st, err := tools.DirtyTree(m.workdir); err != nil {
+				if !force {
+					return "Refusing to refactor: could not read the working tree (" + err.Error() + "). Commit or fix the repo first, or append ' force' to proceed anyway.", nil
+				}
+			} else if st != "" && !force {
+				return "Working tree is dirty:\n" + st + "\n\nCommit first, or append ' force' — refactor runs on a checkpoint branch but dirty files complicate revert.", nil
 			}
 			branch := fmt.Sprintf("ycode/refactor-%d", time.Now().Unix())
 			raw2, _ := json.Marshal(map[string]string{"action": "create_branch", "args": branch})

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -853,6 +854,9 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				}
 			}
 			done := false
+			// Every attempt's failure, so a multi-provider failure reports why
+			// each one gave up instead of only the last.
+			var attempts []string
 			for i, cand := range chain {
 				if i > 0 && prog != nil {
 					prog.Send(resetStreamMsg{})
@@ -861,10 +865,11 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				res, err := agent.RunWithRounds(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 				turnCalls += res.Calls
 				if err != nil && res.Text == "" {
+					attempts = append(attempts, cand.label+": "+err.Error())
 					if i < len(chain)-1 {
 						continue
 					}
-					return errMsg{err}
+					return errMsg{allProvidersFailed(attempts)}
 				}
 				answer = res.Text
 				if err != nil {
@@ -961,7 +966,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				break
 			}
 			if !done {
-				return errMsg{fmt.Errorf("all providers failed")}
+				return errMsg{allProvidersFailed(attempts)}
 			}
 		}
 		complTok := written/4 + toolBytes/4
@@ -975,6 +980,20 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, fails: toolFail, work: workOK, agent: len(allowed) > 0, mode: mode}
 	}
 	return tea.Batch(spinCmd, turn)
+}
+
+// allProvidersFailed reports every attempt, because "all providers failed"
+// names no provider, no model and no reason — the one moment the user most
+// needs to know whether to fix a key, switch model, or check the network.
+func allProvidersFailed(attempts []string) error {
+	if len(attempts) == 0 {
+		return fmt.Errorf("no provider was available for this turn — check /status and /connect")
+	}
+	msg := "every provider failed:\n" + strings.Join(attempts, "\n")
+	if len(attempts) > 1 {
+		msg += "\n(fallbacks were tried; see /status for latency and failures)"
+	}
+	return errors.New(msg)
 }
 
 func truncateArgs(s string) string {

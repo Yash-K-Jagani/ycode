@@ -56,8 +56,16 @@ func (t *AddTool) Run(ctx context.Context, args json.RawMessage) (string, error)
 		return "", err
 	}
 	_ = f.Close()
-	_ = tryFormat(p)
-	added := splitLines(a.Content)
-	out := fmt.Sprintf("appended %d lines to %s\n```diff\n%s```", len(added), p, diffBlock(old, append(old, added...), 60))
+	note := tryFormat(p)
+	// Diff what is on disk, so an appended-then-reformatted file is reported
+	// accurately.
+	now := readFormatted(p)
+	if now == nil {
+		added := splitLines(a.Content)
+		now = append(old, added...)
+	}
+	addedCount := len(splitLines(a.Content))
+	out := fmt.Sprintf("appended %d lines to %s%s\n```diff\n%s```",
+		addedCount, p, note, diffBlock(old, now, 60))
 	return strings.TrimRight(out, "\n"), nil
 }

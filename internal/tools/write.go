@@ -50,11 +50,18 @@ func (t *WriteTool) Run(ctx context.Context, args json.RawMessage) (string, erro
 		return "", err
 	}
 	note := tryFormat(p)
+	// Diff against what is on disk now, not the text the model sent: the
+	// formatter may have reindented it, and a diff that disagrees with the
+	// file misleads both the model and the user.
+	now := readFormatted(p)
+	if now == nil {
+		now = splitLines(a.Content)
+	}
 	out := fmt.Sprintf("wrote %s (%d bytes)%s", p, len(a.Content), note)
 	if len(old) > 0 {
-		out += "\n```diff\n" + diffBlock(old, splitLines(a.Content), 60) + "```"
+		out += "\n```diff\n" + diffBlock(old, now, 60) + "```"
 	} else {
-		out += "\n```diff\n" + diffBlock(nil, splitLines(a.Content), 60) + "```"
+		out += "\n```diff\n" + diffBlock(nil, now, 60) + "```"
 	}
 	return strings.TrimRight(out, "\n"), nil
 }

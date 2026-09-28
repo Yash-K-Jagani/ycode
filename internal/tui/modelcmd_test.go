@@ -87,6 +87,41 @@ func TestModelSwitchedMsgAppliesOnUpdate(t *testing.T) {
 
 // A switch that arrives after the user started a turn is dropped: the running
 // turn is already streaming against the previous model.
+// A total failure must name what was tried and why each gave up. The old
+// message was the bare string "all providers failed", and with fallbacks
+// configured the user saw only the final error, with no provider or model in
+// it — useless precisely when they need to know whether to fix a key or switch
+// models.
+func TestAllProvidersFailedNamesEveryAttempt(t *testing.T) {
+	if got := allProvidersFailed(nil).Error(); got != "no provider was available for this turn — check /status and /connect" {
+		t.Fatalf("empty case = %q", got)
+	}
+	err := allProvidersFailed([]string{
+		"ollama/qwen2.5-coder:3b: dial tcp 127.0.0.1:11434: connection refused",
+		"gemini/gemini-2.0-flash: 401 unauthorized",
+	})
+	msg := err.Error()
+	if !strings.Contains(msg, "every provider failed") {
+		t.Fatalf("missing summary: %q", msg)
+	}
+	for _, want := range []string{
+		"ollama/qwen2.5-coder:3b",
+		"connection refused",
+		"gemini/gemini-2.0-flash",
+		"401 unauthorized",
+		"fallbacks were tried",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("missing %q in:\n%s", want, msg)
+		}
+	}
+	// A single attempt should not suggest fallbacks were involved.
+	single := allProvidersFailed([]string{"ollama/x: boom"}).Error()
+	if strings.Contains(single, "fallbacks were tried") {
+		t.Fatalf("single attempt should not mention fallbacks: %q", single)
+	}
+}
+
 func TestModelSwitchIgnoredWhileBusy(t *testing.T) {
 	m := newModelCmd(t)
 	m.busy = true

@@ -3,7 +3,6 @@ package serve
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -17,7 +16,8 @@ import (
 )
 
 type Server struct {
-	mux *http.ServeMux
+	mux     *http.ServeMux
+	handler http.Handler
 }
 
 func New() *Server {
@@ -29,14 +29,6 @@ func New() *Server {
 		_, _ = w.Write([]byte("ok"))
 	})
 	return s
-}
-
-func (s *Server) Handler() http.Handler { return s.mux }
-
-func Run(addr string) error {
-	srv := &http.Server{Addr: addr, Handler: New().Handler(), ReadTimeout: 30 * time.Second, WriteTimeout: 20 * time.Minute}
-	fmt.Println("ycode api on", addr)
-	return srv.ListenAndServe()
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

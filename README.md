@@ -245,7 +245,7 @@ ycode version            # version + commit + date + os/arch
 ycode doctor [--fix]     # environment self-check
 ycode run "task" [--mode build|plan|goal|chat] [--agent builder] [--goal-iters N]
                                           # goal mode: exit 0 met, 2 blocked, 3 budget, 4 stalled
-ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
+ycode serve [--addr 127.0.0.1:8471]  # local HTTP API; prints an auth token
 ycode batch add|list|run|clear        # offline job queue
 ycode store list|search|install|remove|verify|update # curated skill/plugin store
 ycode ci [--post]                   # diff review + tests, --post comments on the PR
@@ -260,9 +260,16 @@ The three `*_api_key` values are written to the **OS keyring**, not to
 
 API: `GET /healthz`, `GET /v1/models`, `GET /v1/status`, `POST /v1/chat`
 `{prompt, mode?, agent?, workdir?, goal_iters?}` (`mode: goal` runs the goal
-loop). Go SDK: `pkg/ycodeclient`
-(`New(base).Chat/Models/Status`). Outbound webhooks (`turn_complete`,
-`turn_error`, `session_start`) via `~/.ycode/webhooks.yaml`.
+loop and returns `goal_status`). **Auth:** `ycode serve` prints a token, stored
+in `~/.ycode/api_token` (or `YCODE_API_TOKEN`); send it as
+`Authorization: Bearer …`, `X-Ycode-Token: …`, or `?token=…`. It is *required*
+for any non-loopback bind and optional on `127.0.0.1` — `/v1/chat` runs the
+agent with shell and file tools, so an open unauthenticated port is remote code
+execution. `YCODE_ALLOW_ANONYMOUS_API=1` restores anonymous access for scripts
+predating this. Go SDK: `pkg/ycodeclient`
+(`New(base).Chat/Models/Status/Health`; reads the token automatically).
+Outbound webhooks (`turn_complete`, `turn_error`, `session_start`) via
+`~/.ycode/webhooks.yaml`.
 
 ---
 

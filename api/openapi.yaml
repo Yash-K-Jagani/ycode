@@ -1,13 +1,25 @@
 openapi: 3.0.3
 info:
   title: ycode local API
-  version: 0.12.1
+  version: 0.13.0
 servers:
   - url: http://localhost:8471
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        Token printed by `ycode serve`, or from ~/.ycode/api_token, or
+        YCODE_API_TOKEN. Required for any non-loopback bind; optional (but
+        recommended) on 127.0.0.1. Also accepted as X-Ycode-Token or ?token=.
 paths:
   /healthz:
     get:
-      summary: Liveness
+      summary: Liveness (never requires a token)
+      security: []
       responses:
         '200':
           description: ok

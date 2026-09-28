@@ -184,33 +184,42 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	if err != nil {
 		return "", err
 	}
-	res, err := agent.RunWithRounds(ctx, p, model, msgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
+	// One chain implementation, shared with the TUI. This used to try only
+	// fallbacks[0] and to drop the tool log on that attempt, so a second
+	// fallback never ran and a fallback's tool calls were invisible.
+	chain := []agent.Candidate{{Provider: p, Model: model}}
+	for _, fb := range r.Fallbacks() {
+		if fp, ferr := r.Provider(fb.Provider); ferr == nil {
+			chain = append(chain, agent.Candidate{Provider: fp, Model: fb.Model, Label: fb.Provider + "/" + fb.Model})
+		}
+	}
+	res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
 		status := "ok"
 		if err != nil {
 			status = "ERR " + err.Error()
 		}
 		_, _ = fmt.Fprintf(log, "[tool %s] %s\n", name, status)
-	}, modes.Rounds(o.Mode), string(o.Mode))
-	_ = log
-	if err != nil && res.Text == "" {
-		// one fallback attempt on cloud providers
-		fbs := r.Fallbacks()
-		if len(fbs) == 0 {
-			return "", err
-		}
-		fp, ferr := r.Provider(fbs[0].Provider)
-		if ferr != nil {
-			return "", err
-		}
-		res, err = agent.RunWithRounds(ctx, fp, fbs[0].Model, msgs, reg, allowed, hookset, io.Discard, nil, modes.Rounds(o.Mode), string(o.Mode))
-		if err != nil && res.Text == "" {
-			return "", err
-		}
-		res.Text += "\n\n(fell back to " + fbs[0].Provider + "/" + fbs[0].Model + ")"
+	}, modes.Rounds(o.Mode), string(o.Mode), func(label string) {
+		_, _ = fmt.Fprintf(log, "retrying turn on fallback %s\n", label)
+	})
+	if res.Text == "" {
+		err := res.Failure()
+		hookset.Fire(ctx, hooks.OnError, map[string]string{"error": err.Error()})
+		return "", err
+	}
+	answer := res.Text
+	if res.Err != nil {
+		answer += "\n\n(stopped early: " + res.Err.Error() + ")"
+	}
+	if res.FellBack() {
+		answer += "\n\n(fell back to " + res.Used + ")"
 	}
 	hookset.Fire(ctx, hooks.OnResponse, map[string]string{"mode": string(o.Mode)})
-	audit.Log("headless_turn", map[string]any{"mode": string(o.Mode), "prompt": prompt, "answer": res.Text})
-	return res.Text, nil
+	if !cfg.ZeroDataLeak {
+		webhooks.Fire("turn_complete", map[string]any{"mode": string(o.Mode)})
+	}
+	audit.Log("headless_turn", map[string]any{"mode": string(o.Mode), "prompt": prompt, "answer": answer})
+	return answer, nil
 }
 
 // runGoal drives the autonomous goal loop headlessly: the goal text is the
@@ -272,8 +281,16 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 		if err != nil {
 			return "", OutcomeUnverified, err
 		}
+		// A goal run used to have no fallback at all, so a CI run died on the
+		// primary provider's error even with a working fallback configured.
+		chain := []agent.Candidate{{Provider: p, Model: model}}
+		for _, fb := range r.Fallbacks() {
+			if fp, ferr := r.Provider(fb.Provider); ferr == nil {
+				chain = append(chain, agent.Candidate{Provider: fp, Model: fb.Model, Label: fb.Provider + "/" + fb.Model})
+			}
+		}
 		workOK := 0
-		res, err := agent.RunWithRounds(ctx, p, model, turnMsgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
+		chainRes := agent.RunChain(ctx, chain, turnMsgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
 			status := "ok"
 			if err != nil {
 				status = "ERR " + err.Error()
@@ -281,18 +298,27 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 				workOK++
 			}
 			_, _ = fmt.Fprintf(log, "[goal %d/%d tool %s] %s\n", g.Iter+1, g.MaxIter, name, status)
-		}, rounds, string(o.Mode))
-		if err != nil && res.Text == "" {
-			return "", OutcomeUnverified, err
+		}, rounds, string(o.Mode), func(label string) {
+			_, _ = fmt.Fprintf(log, "[goal %d/%d] retrying on fallback %s\n", g.Iter+1, g.MaxIter, label)
+		})
+		if chainRes.Text == "" {
+			return "", OutcomeUnverified, chainRes.Failure()
 		}
-		last = res.Text
-		audit.Log("goal_iteration", map[string]any{"iteration": g.Iter + 1, "prompt": g.Text, "answer": res.Text})
+		res := chainRes.Text
+		if chainRes.Err != nil {
+			res += "\n\n(stopped early: " + chainRes.Err.Error() + ")"
+		}
+		if chainRes.FellBack() {
+			_, _ = fmt.Fprintf(log, "[goal %d/%d] fell back to %s\n", g.Iter+1, g.MaxIter, chainRes.Used)
+		}
+		last = res
+		audit.Log("goal_iteration", map[string]any{"iteration": g.Iter + 1, "prompt": g.Text, "answer": res})
 		// Check the model's verdict against what actually happened: small
 		// models claim GOAL MET on autopilot, and narrate instead of acting.
-		g.Reconcile(res.Text, goal.Evidence{
-			Calls:          res.Calls,
-			SucceededCalls: res.OKs,
-			FailedCalls:    res.Failed,
+		g.Reconcile(res, goal.Evidence{
+			Calls:          chainRes.Calls,
+			SucceededCalls: chainRes.OKs,
+			FailedCalls:    chainRes.Failed,
 			WorkCalls:      workOK,
 			OpenSteps:      openSteps(o.Workdir),
 		})
@@ -303,7 +329,7 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 			break
 		}
 		msgs = append(msgs,
-			apitypes.Message{Role: apitypes.RoleAssistant, Content: res.Text},
+			apitypes.Message{Role: apitypes.RoleAssistant, Content: res},
 			apitypes.Message{Role: apitypes.RoleSystem, Content: g.Continuation()})
 	}
 	hookset.Fire(ctx, hooks.OnResponse, map[string]string{"mode": string(o.Mode)})

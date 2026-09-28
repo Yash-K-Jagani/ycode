@@ -30,7 +30,6 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/mcp"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/plugins"
-	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
@@ -844,42 +843,35 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				prog.Send(sysMsg(fbNote))
 			}
 		} else {
-			type pm struct {
-				p     providers.Provider
-				model string
-				label string
-			}
-			chain := []pm{{p, model, ""}}
+			chain := []agent.Candidate{{Provider: p, Model: model}}
 			for _, fb := range m.router.Fallbacks() {
 				if fp, err := m.router.Provider(fb.Provider); err == nil {
-					chain = append(chain, pm{fp, fb.Model, fb.Provider + "/" + fb.Model})
+					chain = append(chain, agent.Candidate{
+						Provider: fp, Model: fb.Model, Label: fb.Provider + "/" + fb.Model,
+					})
 				}
 			}
-			done := false
-			// Every attempt's failure, so a multi-provider failure reports why
-			// each one gave up instead of only the last.
-			var attempts []string
-			for i, cand := range chain {
-				if i > 0 && prog != nil {
-					prog.Send(resetStreamMsg{})
-					prog.Send(sysMsg("↳ retrying turn on fallback " + cand.label))
-				}
-				res, err := agent.RunWithRounds(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
-				turnCalls += res.Calls
-				if err != nil && res.Text == "" {
-					attempts = append(attempts, cand.label+": "+err.Error())
-					if i < len(chain)-1 {
-						continue
+			// One chain implementation, shared with the headless paths, so a
+			// fallback means the same thing in a TUI turn and a CI run.
+			res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, w, onTool, rounds, string(mode),
+				func(label string) {
+					if prog != nil {
+						prog.Send(resetStreamMsg{})
+						prog.Send(sysMsg("↳ retrying turn on fallback " + label))
 					}
-					return errMsg{allProvidersFailed(attempts)}
-				}
-				answer = res.Text
-				if err != nil {
-					answer += "\n\n(stopped early: " + err.Error() + ")"
-				}
-				if i > 0 {
-					notes = append(notes, "fell back to "+cand.label)
-				}
+				})
+			turnCalls += res.Calls
+			if res.Text == "" {
+				return errMsg{res.Failure()}
+			}
+			answer = res.Text
+			if res.Err != nil {
+				answer += "\n\n(stopped early: " + res.Err.Error() + ")"
+			}
+			if res.FellBack() {
+				notes = append(notes, "fell back to "+res.Used)
+			}
+			{
 				// Deterministic conversion: bare shell command as the whole
 				// answer (rm/touch) becomes the real tool call — no inference.
 				if toolOK == 0 {
@@ -929,7 +921,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 					retryMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: retryNudge})
-					res2, err2 := agent.RunWithRounds(ctx, cand.p, cand.model, retryMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
+					res2, err2 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, retryMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 					turnCalls += res2.Calls
 					if turnCalls > callsBefore && (err2 == nil || res2.Text != "") {
 						answer = res2.Text
@@ -950,7 +942,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 					vRFMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: verifyFact(fails)})
-					res3, err3 := agent.RunWithRounds(ctx, cand.p, cand.model, vRFMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
+					res3, err3 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, vRFMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 					turnCalls += res3.Calls
 					if turnCalls > vCallsBefore && (err3 == nil || res3.Text != "") {
 						answer = res3.Text
@@ -964,11 +956,6 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				} else if len(acted) > 0 {
 					notes = append(notes, fmt.Sprintf("verified: %d file op(s)", len(acted)))
 				}
-				done = true
-				break
-			}
-			if !done {
-				return errMsg{allProvidersFailed(attempts)}
 			}
 		}
 		complTok := written/4 + toolBytes/4

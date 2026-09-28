@@ -29,6 +29,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/headless"
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/plugins"
@@ -844,7 +845,10 @@ func postPRComment(body string) error {
 			b, _ := json.Marshal(payload)
 			rdr = bytes.NewReader(b)
 		}
-		req, _ := http.NewRequest(method, "https://api.github.com"+path, rdr)
+		req, err := httpx.NewRequest(context.Background(), method, "https://api.github.com"+path, rdr)
+		if err != nil {
+			return 0, nil, fmt.Errorf("github request: %w", err)
+		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("Authorization", "Bearer "+token)
 		if payload != nil {

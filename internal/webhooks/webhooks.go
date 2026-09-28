@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,9 +50,22 @@ func Fire(event string, payload map[string]any) {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		req, _ := http.NewRequestWithContext(ctx, "POST", t.URL, bytes.NewReader(body))
+		req, err := httpx.NewRequest(ctx, "POST", t.URL, bytes.NewReader(body))
+		if err != nil {
+			// A malformed url: in webhooks.yaml is a config mistake, not a
+			// reason to drop every other delivery in the list.
+			fmt.Fprintf(os.Stderr, "webhook %q: %v\n", t.URL, err)
+			cancel()
+			continue
+		}
 		req.Header.Set("Content-Type", "application/json")
-		_, _ = http.DefaultClient.Do(req)
+		resp, err := http.DefaultClient.Do(req)
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "webhook %q: %v\n", t.URL, err)
+		}
 		cancel()
 	}
 }

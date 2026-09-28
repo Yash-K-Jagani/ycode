@@ -179,6 +179,10 @@ type mcpLoadedMsg struct {
 	err   error
 }
 
+// modelSwitchedMsg carries a Ctrl+O model choice from the Cmd goroutine to the
+// UI thread, where m.cfg, m.sess and the router are safe to mutate.
+type modelSwitchedMsg struct{ model string }
+
 type progWriter struct{ send func(string) }
 
 func (w progWriter) Write(p []byte) (int, error) { w.send(string(p)); return len(p), nil }
@@ -372,23 +376,28 @@ func (m *Model) atItems() ([]slashItem, string) {
 	return items, token
 }
 
+// cycleModelCmd asks Ollama for the next installed model.
+//
+// The switch itself is applied on the UI thread via modelSwitchedMsg: doing it
+// here would write m.cfg, m.sess and router.cfg from a Cmd goroutine while the
+// turn goroutine and View() read them.
 func (m *Model) cycleModelCmd() tea.Cmd {
+	host, current := m.cfg.OllamaHost, m.cfg.ActiveModel
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		ms, err := ollama.New(m.cfg.OllamaHost).ListModels(ctx)
+		ms, err := ollama.New(host).ListModels(ctx)
 		if err != nil || len(ms) == 0 {
 			return sysMsg("No ollama models found — use /models to see options")
 		}
 		idx := 0
 		for i, mi := range ms {
-			if mi.ID == m.cfg.ActiveModel {
+			if mi.ID == current {
 				idx = i
 				break
 			}
 		}
-		next := ms[(idx+1)%len(ms)]
-		return sysMsg(selectModelSilent(m, next.ID))
+		return modelSwitchedMsg{model: ms[(idx+1)%len(ms)].ID}
 	}
 }
 
@@ -1198,6 +1207,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoBottom()
 		m.appendSys(m.postReview(msg.text, msg.repo, msg.pr))
 		return m, nil
+	case modelSwitchedMsg:
+		if m.busy {
+			// The active turn is already streaming with the previous model.
+			return m, nil
+		}
+		m.appendSys(selectModelSilent(m, msg.model))
+		return m, nil
 	case mcpLoadedMsg:
 		if msg.err != nil {
 			m.appendSys("mcp error: " + msg.err.Error())
@@ -1369,6 +1385,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendSys("New session started.")
 			return m, nil
 		case "ctrl+o":
+			if m.busy {
+				return m, nil
+			}
 			return m, m.cycleModelCmd()
 		case "ctrl+b":
 			m.sideOn = !m.sideOn

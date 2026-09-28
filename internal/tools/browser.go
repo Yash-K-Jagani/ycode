@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 var (
@@ -54,7 +56,10 @@ func (t *BrowserTool) Run(ctx context.Context, args json.RawMessage) (string, er
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", a.URL, nil)
+	req, err := httpx.NewRequest(ctx, "GET", a.URL, nil)
+	if err != nil {
+		return "", fmt.Errorf("browser: %w", err)
+	}
 	req.Header.Set("User-Agent", "ycode/1.0")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

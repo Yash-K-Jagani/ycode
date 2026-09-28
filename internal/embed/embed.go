@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 type Client struct {
@@ -30,7 +32,10 @@ func New(host, model string) *Client {
 
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
 	body, _ := json.Marshal(map[string]any{"model": c.Model, "input": inputs})
-	req, _ := http.NewRequestWithContext(ctx, "POST", c.Host+"/api/embed", bytes.NewReader(body))
+	req, err := httpx.NewRequest(ctx, "POST", c.Host+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("embed: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

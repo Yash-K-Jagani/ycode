@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -32,7 +33,10 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 	if c.APIKey == "" {
 		return nil, fmt.Errorf("%s: API key not set (env var empty)", c.Name_)
 	}
-	req, _ := http.NewRequestWithContext(ctx, "GET", c.BaseURL+"/models", nil)
+	req, err := httpx.NewRequest(ctx, "GET", c.BaseURL+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", c.Name_, err)
+	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	for k, v := range c.ExtraHeaders {
 		req.Header.Set(k, v)
@@ -62,7 +66,10 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 		return apitypes.StreamChunk{}, fmt.Errorf("%s: API key not set", c.Name_)
 	}
 	payload, _ := json.Marshal(map[string]any{"model": model, "messages": msgs, "stream": true})
-	req, _ := http.NewRequestWithContext(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewReader(payload))
+	req, err := httpx.NewRequest(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewReader(payload))
+	if err != nil {
+		return apitypes.StreamChunk{}, fmt.Errorf("%s: %w", c.Name_, err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	for k, v := range c.ExtraHeaders {

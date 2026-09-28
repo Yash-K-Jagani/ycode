@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -29,7 +30,10 @@ func New(host string) *Client {
 func (c *Client) Name() string { return "ollama" }
 
 func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", c.Host+"/api/tags", nil)
+	req, err := httpx.NewRequest(ctx, "GET", c.Host+"/api/tags", nil)
+	if err != nil {
+		return nil, fmt.Errorf("ollama: %w", err)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama not reachable at %s: %w", c.Host, err)
@@ -53,7 +57,10 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 
 func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Message, w io.Writer) (apitypes.StreamChunk, error) {
 	body, _ := json.Marshal(map[string]any{"model": model, "messages": msgs, "stream": true})
-	req, _ := http.NewRequestWithContext(ctx, "POST", c.Host+"/api/chat", bytes.NewReader(body))
+	req, err := httpx.NewRequest(ctx, "POST", c.Host+"/api/chat", bytes.NewReader(body))
+	if err != nil {
+		return apitypes.StreamChunk{}, fmt.Errorf("ollama: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 type APITool struct{ Allowlist []string }
@@ -64,7 +66,10 @@ func (t *APITool) Run(ctx context.Context, args json.RawMessage) (string, error)
 	if a.Body != "" {
 		body = strings.NewReader(a.Body)
 	}
-	req, _ := http.NewRequestWithContext(ctx, method, a.URL, body)
+	req, err := httpx.NewRequest(ctx, method, a.URL, body)
+	if err != nil {
+		return "", fmt.Errorf("api: %w", err)
+	}
 	req.Header.Set("User-Agent", "ycode/1.0")
 	if a.Body != "" {
 		req.Header.Set("Content-Type", "application/json")

@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 var httpURLRe = regexp.MustCompile(`^https?://[^\s"'<>]+$`)
@@ -157,7 +159,12 @@ func ghAPI(ctx context.Context, a githubArgs) (string, error) {
 		b, _ := json.Marshal(payload)
 		body = strings.NewReader(string(b))
 	}
-	req, _ := http.NewRequestWithContext(ctx, method, endpoint, body)
+	req, err := httpx.NewRequest(ctx, method, endpoint, body)
+	if err != nil {
+		// a.Repo is model-supplied: a typo or an injected "%zz" must be a
+		// tool error the model can read, never a nil-pointer panic.
+		return "", fmt.Errorf("github: %w (check the repo argument, e.g. owner/repo)", err)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	if tk != "" {
 		req.Header.Set("Authorization", "Bearer "+tk)
@@ -202,7 +209,10 @@ func postReview(ctx context.Context, a githubArgs) (string, error) {
 		"body": a.Review.Summary, "event": "COMMENT", "comments": comments,
 	})
 	endpoint := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d/reviews", a.Repo, a.Number)
-	req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(payload))
+	req, err := httpx.NewRequest(ctx, "POST", endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("github: %w (check the repo argument, e.g. owner/repo)", err)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+tk)
 	req.Header.Set("Content-Type", "application/json")

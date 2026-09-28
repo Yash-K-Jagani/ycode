@@ -66,10 +66,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Prompt  string `json:"prompt"`
-		Mode    string `json:"mode"`
-		Agent   string `json:"agent"`
-		Workdir string `json:"workdir"`
+		Prompt    string `json:"prompt"`
+		Mode      string `json:"mode"`
+		Agent     string `json:"agent"`
+		Workdir   string `json:"workdir"`
+		GoalIters int    `json:"goal_iters"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -91,7 +92,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 	defer cancel()
-	answer, err := headless.Run(ctx, cfg, req.Prompt, headless.Options{Mode: mode, Agent: req.Agent, Workdir: req.Workdir})
+	answer, err := headless.Run(ctx, cfg, req.Prompt, headless.Options{Mode: mode, Agent: req.Agent, Workdir: req.Workdir, GoalIters: req.GoalIters})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return

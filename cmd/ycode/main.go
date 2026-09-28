@@ -668,9 +668,10 @@ func runStatus() {
 
 func runCmd() *cobra.Command {
 	var mode, agent string
+	var goalIters int
 	c := &cobra.Command{
 		Use:   "run <prompt>",
-		Short: "Headless single turn (tools in build/plan)",
+		Short: "Headless single turn (tools in build/goal/plan; goal loops until done)",
 		Args:  cobra.MinimumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg, _ := config.Load()
@@ -684,7 +685,7 @@ func runCmd() *cobra.Command {
 				}
 			}
 			workdir, _ := os.Getwd()
-			answer, err := headless.Run(context.Background(), cfg, strings.Join(args, " "), headless.Options{Mode: m, Agent: agent, Workdir: workdir, Stderr: os.Stderr})
+			answer, err := headless.Run(context.Background(), cfg, strings.Join(args, " "), headless.Options{Mode: m, Agent: agent, Workdir: workdir, Stderr: os.Stderr, GoalIters: goalIters})
 			if err != nil {
 				fmt.Println("error:", err)
 				os.Exit(1)
@@ -692,8 +693,9 @@ func runCmd() *cobra.Command {
 			fmt.Println(answer)
 		},
 	}
-	c.Flags().StringVar(&mode, "mode", "build", "chat|plan|build|thinking")
+	c.Flags().StringVar(&mode, "mode", "build", "chat|plan|build|goal|thinking")
 	c.Flags().StringVar(&agent, "agent", "builder", "agent name")
+	c.Flags().IntVar(&goalIters, "goal-iters", 0, "goal mode: max autonomous iterations (0 = default)")
 	return c
 }
 
@@ -724,7 +726,7 @@ func batchCmd() *cobra.Command {
 			fmt.Println("queued", j.ID)
 		},
 	}
-	addCmd.Flags().String("mode", "build", "mode for the job")
+	addCmd.Flags().String("mode", "build", "mode for the job (chat|plan|build|goal|thinking)")
 	clearCmd := &cobra.Command{
 		Use: "clear", Short: "Clear jobs (finished only by default)",
 		Run: func(cmd *cobra.Command, args []string) {

@@ -156,13 +156,13 @@ No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick
 
 ## 4. The TUI
 
-- **Chat pane** (markdown, code blocks on tinted panels, command chips), **input box** with a mode chip (`▸ build · builder`), keystroke command palette, status bar.
-- **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, context meter, session + daily spend, live task
-list. Big tasks are auto-broken into `todo` steps shown here as they complete.
+- **Chat pane** (markdown, code blocks on tinted panels, command chips), **input box** with a mode chip (`▸ build · builder`, or `▸ goal · builder · goal 3/12 active` during a goal run), keystroke command palette, status bar.
+- **Right sidebar** (`Ctrl+B`): folder, model, session tokens in/out, context meter, session + daily spend, the active goal with its iteration counter, and a live task
+  list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
 - `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.
-- Codebase-aware: every build/plan turn sees the repo tree, README head, `AGENTS.md` rules, and git branch/status — plus `edit` tolerates `12: ` line prefixes and suggests close matches on miss.
+- Codebase-aware: every build/plan/goal turn sees the repo tree, README head, `AGENTS.md` rules, and git branch/status — plus `edit` tolerates `12: ` line prefixes and suggests close matches on miss.
 
 ---
 
@@ -171,12 +171,23 @@ list. Big tasks are auto-broken into `todo` steps shown here as they complete.
 | Mode | Tools | Purpose |
 |---|---|---|
 | `build` | all (read/write/edit/bash/git/…) | Implement, edit, run tests |
+| `goal` | all but `delete` | Work a goal unattended until it's met, blocked, or out of budget |
 | `plan` | read-only subset | Clarifying questions when vague, then numbered plan ending in `AWAITING APPROVAL` |
 | `chat` | none | Plain conversation (file tasks nudge you to `/build`) |
 | `thinking` | none | Visible `<scratchpad>` reasoning, then the answer |
 
-Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor comes from `/agent`
+Switch with `Tab` or `/plan` `/goal` `/build` `/chat` `/thinking`. The agent flavor comes from `/agent`
 (`builder`/`planner`/`reviewer`). Flow: plan in plan mode, switch to build, say **build it** to implement.
+
+**Goal mode** is for handing over a whole objective instead of a single turn:
+`/goal add a healthcheck endpoint` switches to goal mode and starts working
+immediately. The agent turns the goal into acceptance criteria, records them in
+the todo list, and works one step per iteration without asking you anything. It
+ends the run itself with `GOAL MET` (evidence per criterion) or
+`GOAL BLOCKED: <reason>`, or stops when the 12-iteration budget is spent. The
+sidebar and `/status` show the goal, the iteration counter, and the task list;
+`Esc` stops a run. Goals live in the session only — `/new` clears them — and
+`ycode run --mode goal "…"` runs the same loop headlessly (`--goal-iters` caps it).
 
 ---
 
@@ -198,7 +209,8 @@ Switch with `Tab` or `/plan` `/build` `/chat` `/thinking`. The agent flavor come
 | `/agent [name]` | Pick builder/planner/reviewer |
 | `/init` | Scaffold `.ycode/` + `AGENTS.md` in the project |
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
-| `/plan` `/build` `/chat` `/thinking` | Switch mode |
+| `/plan` `/goal` `/build` `/chat` `/thinking` | Switch mode |
+| `/goal [text]` | Goal mode: with text, set the goal and start working it unattended; without, show the current goal |
 | `/review [path]` | AI review of `git diff` (summary → file:line findings → fixes) |
 | `/test [path] [filter]` | Run project tests (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python); `--watch` re-runs on save |
 | `/refactor <goal>` | Checkpoint branch + armed instruction with revert directions |
@@ -224,7 +236,7 @@ ycode upgrade [--apply]          # check for / install a newer release
 ycode status             # provider health, models, cost today
 ycode version            # version + commit + date + os/arch
 ycode doctor [--fix]     # environment self-check
-ycode run "task" [--mode build|plan|chat] [--agent builder]
+ycode run "task" [--mode build|plan|goal|chat] [--agent builder] [--goal-iters N]
 ycode serve [--addr 127.0.0.1:8471]   # local HTTP API (api/openapi.yaml)
 ycode batch add|list|run|clear        # offline job queue
 ycode store list|search|install|remove|verify|update # curated skill/plugin store
@@ -239,7 +251,8 @@ The three `*_api_key` values are written to the **OS keyring**, not to
 `config.yaml`, so `ycode config` output is safe to paste into an issue.
 
 API: `GET /healthz`, `GET /v1/models`, `GET /v1/status`, `POST /v1/chat`
-`{prompt, mode?, agent?, workdir?}`. Go SDK: `pkg/ycodeclient`
+`{prompt, mode?, agent?, workdir?, goal_iters?}` (`mode: goal` runs the goal
+loop). Go SDK: `pkg/ycodeclient`
 (`New(base).Chat/Models/Status`). Outbound webhooks (`turn_complete`,
 `turn_error`, `session_start`) via `~/.ycode/webhooks.yaml`.
 
@@ -260,7 +273,8 @@ On primary failure, configured cloud providers are retried as fallbacks
 
 ## 9. Agent tools
 
-Build mode tools (plan gets the read-only subset): `read` (multi-path) `write` `create` `add` `edit` `remove` `changes`
+Build mode tools (plan gets the read-only subset, goal gets all of them except `delete`):
+`read` (multi-path) `write` `create` `add` `edit` `remove` `changes`
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`
@@ -268,7 +282,8 @@ gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 Chat code blocks get Chroma syntax highlighting with line numbers; write/edit results show red/green diffs. File reads/writes show path cards; shell commands their own tint.
 
 Models emit `<tool:name>{json}</tool:name>` (tolerant parser, schema-error
-retries, repeat-guard with cached results, 8-round cap). Small local models
+retries, repeat-guard with cached results, 6-round cap in plan, 8 in build, 16
+in goal). Small local models
 work; 3b+ coders follow instructions far better than 1–2b ones.
 
 ---
@@ -277,7 +292,7 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
 
 - **Local RAG**: `/rag ingest [path]` chunks the repo (40-line windows) and
   embeds via Ollama (`nomic-embed-text`); top-4 chunks auto-inject into
-  build/plan turns; `/rag <query>` searches manually. JSON index per project.
+  build/plan/goal turns; `/rag <query>` searches manually. JSON index per project.
 - **Semantic cache**: exact + 0.985-cosine hits per provider+model, 7-day TTL,
   chat/thinking only (never tool turns). Hits reply instantly with `⚡`.
 - **Router**: latency stats + cloud fallbacks (both single-shot and agent-loop
@@ -339,8 +354,9 @@ Other files: `mcp.json`, `hooks.yaml`, `webhooks.yaml`,
 
 ```
 cmd/ycode/main.go            # CLI: TUI + run/serve/batch/ci/daemon/audit/version
-internal/tui/                # Bubble Tea UI: app, palette, connect modal, render, slash
-internal/modes/              # plan/build/chat/thinking prompts + tool allow-lists
+internal/tui/                # Bubble Tea UI: app, palette, connect modal, render, slash, goal run
+internal/modes/              # plan/goal/build/chat/thinking prompts, tool allow-lists, round budgets
+internal/goal/               # goal state: verdict markers (GOAL MET/GOAL BLOCKED), iteration budget
 internal/providers/          # ollama, gemini, openrouter, groq, openaicompat, registry
 internal/router/             # selection, latency stats, cloud fallbacks
 internal/agent/              # <tool:> loop: parse, exec, repeat-guard, injection notes
@@ -431,6 +447,8 @@ Conventions: small focused packages, table-less unit tests per package,
 | Model asks for paths | Use `/build` (chat has no tools); `/rag ingest` helps big repos |
 | Raw `<tool:>` tags in answers / round-limit notes | Rebuild (`go install ./cmd/ycode`); try a 3b+ coder model |
 | Plan mode calls nothing | Rebuild — old binaries predate plan tool docs |
+| A goal run stops after N turns | That's the iteration budget: `/goal` again with a narrower goal, or `ycode run --mode goal --goal-iters 30` headlessly |
+| Goal run burns tokens without finishing | 1.5b models rarely honour the `GOAL MET`/`GOAL BLOCKED` contract — use a 3b+ coder model (`/models`) |
 | Cloud 4xx/rate limits | Check key env, `/status` latency/failures; fallbacks engage automatically |
 | `golangci-lint-action` fails | Use golangci-lint v2 config (`version: "2"`, `formatters:` for gofmt) |
 | `ycode` resolves to another program | `where ycode`; ensure `go/bin` wins or uninstall the clash |

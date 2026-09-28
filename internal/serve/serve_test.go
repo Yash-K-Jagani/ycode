@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Yash-K-Jagani/ycode/internal/modes"
 )
 
 func TestEndpoints(t *testing.T) {
@@ -37,5 +39,15 @@ func TestEndpoints(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for bad mode, got %d", resp.StatusCode)
+	}
+}
+
+// goal is a valid mode: it must get past validation (the turn then fails on
+// the provider, which is not what this test is about).
+func TestChatAcceptsGoalMode(t *testing.T) {
+	for _, mode := range []string{"goal", "build", "plan", "chat", "thinking"} {
+		if _, err := modes.Parse(mode); err != nil {
+			t.Fatalf("Parse(%q): %v", mode, err)
+		}
 	}
 }

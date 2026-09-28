@@ -29,6 +29,7 @@ func slashList() []slashItem {
 		{"/init", "scaffold .ycode"},
 		{"/editor", "open $EDITOR"},
 		{"/plan", "plan mode"},
+		{"/goal", "goal mode: run unattended"},
 		{"/build", "build mode"},
 		{"/chat", "chat mode"},
 		{"/thinking", "thinking mode"},
@@ -58,7 +59,7 @@ func iconFor(name string) string {
 		return "📁"
 	case strings.HasPrefix(name, "/review"), strings.HasPrefix(name, "/test"), strings.HasPrefix(name, "/refactor"), strings.HasPrefix(name, "/rag"):
 		return "🔍"
-	case strings.HasPrefix(name, "/plan"), strings.HasPrefix(name, "/build"), strings.HasPrefix(name, "/chat"), strings.HasPrefix(name, "/thinking"):
+	case strings.HasPrefix(name, "/plan"), strings.HasPrefix(name, "/goal"), strings.HasPrefix(name, "/build"), strings.HasPrefix(name, "/chat"), strings.HasPrefix(name, "/thinking"):
 		return "⚡"
 	case strings.HasPrefix(name, "/doctor"), strings.HasPrefix(name, "/status"), strings.HasPrefix(name, "/connect"), strings.HasPrefix(name, "/agent"):
 		return "🛠"

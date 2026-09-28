@@ -11,6 +11,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/audit"
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	yctx "github.com/Yash-K-Jagani/ycode/internal/context"
+	"github.com/Yash-K-Jagani/ycode/internal/goal"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/router"
@@ -24,6 +25,24 @@ type Options struct {
 	Workdir string
 	Timeout time.Duration
 	Stderr  io.Writer
+	// GoalIters overrides the goal-mode iteration budget (0 = default).
+	GoalIters int
+}
+
+// goalMaxIters is the headless goal budget; short compared with the TUI
+// because nobody is watching a CI run spend an hour of tokens.
+const goalMaxIters = 6
+
+// openSteps counts unfinished task-list entries: in goal mode this is the
+// harness's independent check on a claimed GOAL MET.
+func openSteps(workdir string) int {
+	n := 0
+	for _, t := range tools.ReadTodos(workdir) {
+		if !t.Done {
+			n++
+		}
+	}
+	return n
 }
 
 func (o *Options) withDefaults() {
@@ -42,7 +61,17 @@ func (o *Options) withDefaults() {
 }
 
 // Run executes a single headless turn: system prompt + optional tool loop.
+// In goal mode it instead runs the goal loop: repeated turns until the model
+// reports GOAL MET / GOAL BLOCKED or the iteration budget runs out.
 func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
+	o.withDefaults()
+	if o.Mode == modes.Goal {
+		return runGoal(ctx, cfg, prompt, o)
+	}
+	return runTurn(ctx, cfg, prompt, o)
+}
+
+func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
 	o.withDefaults()
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
@@ -58,7 +87,7 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 	allowed := modes.AllowedTools(o.Mode)
 	sys := modes.SystemPrompt(o.Mode, reg, o.Workdir, cfg.ActiveModel) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
 		"\nHEADLESS: no interactive user. Do the task, verify with tools, output the final result."
-	if o.Mode == modes.Build || o.Mode == modes.Plan {
+	if modes.UsesRepoContext(o.Mode) {
 		sys += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +
 			"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
 		if brief := yctx.Brief(o.Workdir); brief != "" {
@@ -91,13 +120,13 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 	if err != nil {
 		return "", err
 	}
-	res, err := agent.Run(ctx, p, model, msgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
+	res, err := agent.RunWithRounds(ctx, p, model, msgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
 		status := "ok"
 		if err != nil {
 			status = "ERR " + err.Error()
 		}
 		_, _ = fmt.Fprintf(log, "[tool %s] %s\n", name, status)
-	})
+	}, modes.Rounds(o.Mode), string(o.Mode))
 	_ = log
 	if err != nil && res.Text == "" {
 		// one fallback attempt on cloud providers
@@ -109,7 +138,7 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 		if ferr != nil {
 			return "", err
 		}
-		res, err = agent.Run(ctx, fp, fbs[0].Model, msgs, reg, allowed, hookset, io.Discard, nil)
+		res, err = agent.RunWithRounds(ctx, fp, fbs[0].Model, msgs, reg, allowed, hookset, io.Discard, nil, modes.Rounds(o.Mode), string(o.Mode))
 		if err != nil && res.Text == "" {
 			return "", err
 		}
@@ -118,4 +147,95 @@ func Run(ctx context.Context, cfg config.Config, prompt string, o Options) (stri
 	hookset.Fire(ctx, hooks.OnResponse, map[string]string{"mode": string(o.Mode)})
 	audit.Log("headless_turn", map[string]any{"mode": string(o.Mode), "prompt": prompt, "answer": res.Text})
 	return res.Text, nil
+}
+
+// runGoal drives the autonomous goal loop headlessly: the goal text is the
+// prompt, and iterations continue until the model reports GOAL MET / GOAL
+// BLOCKED or MaxIter turns have run.
+func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (string, error) {
+	o.withDefaults()
+	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
+	defer cancel()
+	if cfg.ZeroDataLeak {
+		ctx = tools.WithZeroLeak(ctx)
+	}
+	iters := o.GoalIters
+	if iters <= 0 {
+		iters = goalMaxIters
+	}
+	g := goal.New(prompt, iters)
+	r := router.New(cfg)
+	ag, ok := agents.Get(o.Agent)
+	if !ok {
+		return "", fmt.Errorf("unknown agent %q", o.Agent)
+	}
+	reg := tools.DefaultRegistry(o.Workdir)
+	allowed := modes.AllowedTools(o.Mode)
+	base := modes.SystemPrompt(o.Mode, reg, o.Workdir, cfg.ActiveModel) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
+		"\nHEADLESS: no interactive user. Do the task, verify with tools, output the final result."
+	if modes.UsesRepoContext(o.Mode) {
+		base += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +
+			"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
+		if brief := yctx.Brief(o.Workdir); brief != "" {
+			base += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
+		}
+	}
+	hookset := hooks.Load()
+	log := o.Stderr
+	rounds := modes.Rounds(o.Mode)
+
+	msgs := []apitypes.Message{
+		{Role: apitypes.RoleSystem, Content: base + g.PromptBlock("", "")},
+		{Role: apitypes.RoleUser, Content: g.Text},
+	}
+	hookset.Fire(ctx, hooks.OnRequest, map[string]string{"mode": string(o.Mode), "workdir": o.Workdir, "headless": "true"})
+
+	var last string
+	for {
+		select {
+		case <-ctx.Done():
+			return last + "\n\n(stopped: " + ctx.Err().Error() + ")", ctx.Err()
+		default:
+		}
+		trimmed, _ := yctx.Trim(msgs[1:], yctx.BudgetFor(cfg.ActiveModel)-1500)
+		turnMsgs := append([]apitypes.Message{msgs[0]}, trimmed...)
+		p, model, err := r.Active()
+		if err != nil {
+			return "", err
+		}
+		workOK := 0
+		res, err := agent.RunWithRounds(ctx, p, model, turnMsgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
+			status := "ok"
+			if err != nil {
+				status = "ERR " + err.Error()
+			} else if goal.IsWorkTool(name) {
+				workOK++
+			}
+			_, _ = fmt.Fprintf(log, "[goal %d/%d tool %s] %s\n", g.Iter+1, g.MaxIter, name, status)
+		}, rounds, string(o.Mode))
+		if err != nil && res.Text == "" {
+			return "", err
+		}
+		last = res.Text
+		audit.Log("goal_iteration", map[string]any{"iteration": g.Iter + 1, "prompt": g.Text, "answer": res.Text})
+		// Check the model's verdict against what actually happened: small
+		// models claim GOAL MET on autopilot, and narrate instead of acting.
+		g.Reconcile(res.Text, goal.Evidence{
+			Calls:          res.Calls,
+			SucceededCalls: res.OKs,
+			FailedCalls:    res.Failed,
+			WorkCalls:      workOK,
+			OpenSteps:      openSteps(o.Workdir),
+		})
+		if !g.Next() {
+			break
+		}
+		msgs = append(msgs,
+			apitypes.Message{Role: apitypes.RoleAssistant, Content: res.Text},
+			apitypes.Message{Role: apitypes.RoleSystem, Content: g.Continuation()})
+	}
+	hookset.Fire(ctx, hooks.OnResponse, map[string]string{"mode": string(o.Mode)})
+	audit.Log("headless_goal", map[string]any{"goal": g.Text, "status": string(g.Status), "iterations": g.Iter, "answer": last})
+	_, _ = fmt.Fprintf(log, "goal: %s\n", g.Summary())
+	return last + "\n\n" + g.StopNote(), nil
 }

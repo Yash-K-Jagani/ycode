@@ -35,6 +35,11 @@ func ReadTodos(workdir string) []TodoItem {
 	return out
 }
 
+// ClearTodos empties the workdir task list (a new goal starts a fresh one).
+func ClearTodos(workdir string) error {
+	return os.Remove((&TodoTool{Workdir: workdir}).file())
+}
+
 type TodoTool struct{ Workdir string }
 
 func (TodoTool) Name() string { return "todo" }

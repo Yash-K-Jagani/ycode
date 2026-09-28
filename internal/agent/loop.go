@@ -167,11 +167,26 @@ type Result struct {
 	Text   string
 	Rounds int
 	Calls  int
+	// OKs counts the tool calls that completed without error, and Failed
+	// those that errored. Together they show whether a turn really did the
+	// work it went on to claim.
+	OKs    int
+	Failed int
 }
 
 // Run executes the agentic loop: stream → parse tool calls → execute → feed back.
 // hk may be nil (no hooks).
 func Run(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, onTool func(name, args, result string, err error)) (Result, error) {
+	return RunWithRounds(ctx, p, model, msgs, reg, allowed, hk, w, onTool, MaxRounds, "")
+}
+
+// RunWithRounds is Run with a per-turn tool-round budget (rounds <= 0 falls
+// back to MaxRounds) and the mode name, passed to pre/post tool hooks.
+// Goal mode uses a larger budget: it runs unattended.
+func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, onTool func(name, args, result string, err error), rounds int, mode string) (Result, error) {
+	if rounds <= 0 {
+		rounds = MaxRounds
+	}
 	allow := map[string]bool{}
 	for _, n := range allowed {
 		allow[n] = true
@@ -181,19 +196,21 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	lastGood := ""
 	hadSuccess := false
 	totalCalls := 0
+	succeeded := 0
+	failed := 0
 	counts := map[string]int{}
 	cached := map[string]string{}
 	prevNorm := ""
-	for round := 0; round < MaxRounds; round++ {
+	for round := 0; round < rounds; round++ {
 		var buf strings.Builder
 		tw := io.MultiWriter(w, &buf)
 		chunk, err := p.Stream(ctx, model, cur, tw)
 		if err != nil {
 			if lastGood != "" {
-				return Result{Text: lastGood, Rounds: round, Calls: totalCalls}, err
+				return Result{Text: lastGood, Rounds: round, Calls: totalCalls, OKs: succeeded, Failed: failed}, err
 			}
 			if last != "" {
-				return Result{Text: last, Rounds: round, Calls: totalCalls}, err
+				return Result{Text: last, Rounds: round, Calls: totalCalls, OKs: succeeded, Failed: failed}, err
 			}
 			return Result{}, err
 		}
@@ -208,12 +225,12 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			if answer == "" {
 				answer = finalText(full)
 			}
-			return Result{Text: answer + "\n\n(stopped: response repeating — answered from collected results)", Rounds: round + 1, Calls: totalCalls}, nil
+			return Result{Text: answer + "\n\n(stopped: response repeating — answered from collected results)", Rounds: round + 1, Calls: totalCalls, OKs: succeeded, Failed: failed}, nil
 		}
 		prevNorm = norm
 		calls := ParseCalls(full)
 		if len(calls) == 0 {
-			return Result{Text: finalText(full), Rounds: round + 1, Calls: totalCalls}, nil
+			return Result{Text: finalText(full), Rounds: round + 1, Calls: totalCalls, OKs: succeeded, Failed: failed}, nil
 		}
 		totalCalls += len(calls)
 		cur = append(cur, apitypes.Message{Role: apitypes.RoleAssistant, Content: full})
@@ -226,9 +243,10 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			if prev, dup := cached[key]; dup {
 				res = prev + "\n(You already called this. Do NOT call it again — write the final answer now using the results above.)"
 			} else {
-				res, err = execCall(ctx, reg, allow, hk, c)
+				res, err = execCall(ctx, reg, allow, hk, mode, c)
 				if err == nil {
 					hadSuccess = true
+					succeeded++
 					cached[key] = res
 					lastGood = "<tool_result:" + c.Name + ">" + res + "</tool_result:" + c.Name + ">"
 				}
@@ -237,6 +255,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 				onTool(c.Name, string(c.Args), res, err)
 			}
 			if err != nil {
+				failed++
 				res = "ERROR: " + err.Error()
 			}
 			if hits := security.ScanInjection(res); len(hits) > 0 {
@@ -257,7 +276,7 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 			} else {
 				answer += "\n\n(stopped: same tool call repeated — answer built from its result)"
 			}
-			return Result{Text: answer, Rounds: round + 1, Calls: totalCalls}, nil
+			return Result{Text: answer, Rounds: round + 1, Calls: totalCalls, OKs: succeeded, Failed: failed}, nil
 		}
 	}
 	answer := finalText(lastGood)
@@ -269,10 +288,10 @@ func Run(ctx context.Context, p providers.Provider, model string, msgs []apitype
 	if !hadSuccess {
 		answer += "\n(no tool completed successfully — nothing was done)"
 	}
-	return Result{Text: answer, Rounds: MaxRounds, Calls: totalCalls}, nil
+	return Result{Text: answer, Rounds: rounds, Calls: totalCalls, OKs: succeeded, Failed: failed}, nil
 }
 
-func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, c Call) (string, error) {
+func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call) (string, error) {
 	if !allow[c.Name] {
 		return "", fmt.Errorf("tool %q not allowed in this mode", c.Name)
 	}
@@ -290,7 +309,7 @@ func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, h
 			_, _ = tmp.Write([]byte(c.Args))
 			_ = tmp.Close()
 			defer func() { _ = os.Remove(tmp.Name()) }()
-			if err := hk.Gate(ctx, c.Name, tmp.Name(), map[string]string{"mode": ""}); err != nil {
+			if err := hk.Gate(ctx, c.Name, tmp.Name(), map[string]string{"mode": mode, "tool": c.Name}); err != nil {
 				return "", err
 			}
 		}
@@ -328,7 +347,7 @@ func Exec(ctx context.Context, reg *tools.Registry, allowed []string, hk *hooks.
 	}
 	out := make([]string, 0, len(calls))
 	for _, c := range calls {
-		res, err := execCall(ctx, reg, allow, hk, c)
+		res, err := execCall(ctx, reg, allow, hk, "", c)
 		if onTool != nil {
 			onTool(c.Name, string(c.Args), res, err)
 		}

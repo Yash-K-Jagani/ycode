@@ -163,12 +163,12 @@ func (m *Model) setMode(md modes.Mode) string {
 func slashRegistry() map[string]slashHandler {
 	return map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /theme\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /build /chat /thinking (or Tab). Stop output: Ctrl+C / Esc.", nil
+			return "Commands: /help /exit /new /models /sessions /status /connect /agent /init /editor /doctor /export /tools /theme\nIntegrations: /review [path] · /mcps · /skills · /hooks\nIntelligence: /rag · /test [path] · /refactor <instruction>\nEcosystem: /prompts · /plugins · /store · /variants · /models install <name>\nModes: /plan /goal /build /chat /thinking (or Tab). Goals: /goal <text> runs unattended until GOAL MET or GOAL BLOCKED (Esc stops). Stop output: Ctrl+C / Esc.", nil
 		},
 		"/tools": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			names := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
 			if len(names) == 0 {
-				return "No tools in " + string(m.mode) + " mode — switch to /build (all) or /plan (read-only).", nil
+				return "No tools in " + string(m.mode) + " mode — switch to /build (all), /goal (all but delete) or /plan (read-only).", nil
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "Tools available in %s mode (%d):\n", m.mode, len(names))
@@ -204,6 +204,7 @@ func slashRegistry() map[string]slashHandler {
 			_ = m.sess.Save()
 			m.msgs = nil
 			m.pendingPlan = ""
+			m.goal = nil
 			m.vp.SetContent("")
 			return "New session started.", nil
 		},
@@ -215,6 +216,7 @@ func slashRegistry() map[string]slashHandler {
 				}
 				m.sess = fork
 				m.renderAll()
+				m.goal = nil
 				return "Forked as " + fork.Title + " (" + fork.ID + ") — original untouched.", nil
 			}
 			if f := strings.Fields(args); len(f) >= 1 && f[0] == "search" {
@@ -284,6 +286,7 @@ func slashRegistry() map[string]slashHandler {
 				m.router.Update(m.cfg)
 				_ = m.cfg.Save()
 				m.renderAll()
+				m.goal = nil
 				return "Resumed " + s.Title + " (" + m.cfg.ActiveProvider + "/" + m.cfg.ActiveModel + ")", nil
 			}
 			list, err := sessions.List()
@@ -351,14 +354,31 @@ func slashRegistry() map[string]slashHandler {
 			if idx, ok := ragLoad(m); ok {
 				ragInfo = fmt.Sprintf("rag: %d chunks (built %s)", len(idx.Chunks), idx.BuiltAt.Format("2006-01-02 15:04"))
 			}
-			return fmt.Sprintf("mode=%s agent=%s store=%s\nprovider=%s model=%s msgs=%d ~tokens=%d\ntoday: %d prompt + %d completion tokens · $%.4f\ncache: %d hits / %d misses (%d items)\ntools: %d/%d agentic turns used tools (%d calls)\n%s\nlatency:\n%s",
-				m.mode, m.agent.Name, sessions.Backend(), m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages), toks, p, c, usd, h, mi, size, m.toolTurns, m.toolModeTurns, m.toolCallsTotal, ragInfo, m.router.Stats().Summary()), nil
+			goalLine := "none"
+			if m.goal != nil {
+				goalLine = m.goal.Summary()
+				if m.goal.Running() {
+					goalLine += " (running — Esc stops)"
+				}
+			}
+			return fmt.Sprintf("mode=%s agent=%s store=%s goal=%s\nprovider=%s model=%s msgs=%d ~tokens=%d\ntoday: %d prompt + %d completion tokens · $%.4f\ncache: %d hits / %d misses (%d items)\ntools: %d/%d agentic turns used tools (%d calls)\n%s\nlatency:\n%s",
+				m.mode, m.agent.Name, sessions.Backend(), goalLine, m.cfg.ActiveProvider, m.cfg.ActiveModel, len(m.sess.Messages), toks, p, c, usd, h, mi, size, m.toolTurns, m.toolModeTurns, m.toolCallsTotal, ragInfo, m.router.Stats().Summary()), nil
 		},
 		"/connect": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			m.conn = newConnect()
 			return "", textinput.Blink
 		},
-		"/plan":  func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Plan), nil },
+		"/plan": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Plan), nil },
+		"/goal": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			spec := strings.TrimSpace(args)
+			if spec == "" {
+				return m.setGoal(""), nil
+			}
+			if out := m.setGoal(spec); out != "" {
+				return out, nil
+			}
+			return "", m.startTurn(spec, turnOpts{})
+		},
 		"/build": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Build), nil },
 		"/chat":  func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Chat), nil },
 		"/thinking": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
@@ -834,6 +854,9 @@ func doctorFix(m *Model) string {
 func doctorReport(ctx context.Context, m *Model) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "mode=%s agent=%s\nprovider=%s model=%s\n", m.mode, m.agent.Name, m.cfg.ActiveProvider, m.cfg.ActiveModel)
+	if m.goal != nil {
+		fmt.Fprintf(&b, "goal: %s\n", m.goal.Summary())
+	}
 	allowed := modes.AllowedTools(m.mode, append(m.mcpNames, m.pluginNames...)...)
 	if len(allowed) == 0 {
 		b.WriteString("tools: NONE in this mode — switch to /build (all) or /plan (read-only) to use file tools\n")

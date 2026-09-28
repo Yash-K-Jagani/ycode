@@ -25,7 +25,7 @@ paths:
           description: status
   /v1/chat:
     post:
-      summary: Headless chat turn (tools in build/plan modes)
+      summary: Headless turn (tools in build/goal/plan modes; goal loops until done)
       requestBody:
         required: true
         content:
@@ -35,9 +35,10 @@ paths:
               required: [prompt]
               properties:
                 prompt: { type: string }
-                mode: { type: string, enum: [chat, plan, build, thinking] }
+                mode: { type: string, enum: [chat, plan, build, goal, thinking] }
                 agent: { type: string }
                 workdir: { type: string }
+                goal_iters: { type: integer, description: goal mode only: max autonomous iterations }
       responses:
         '200':
           description: answer

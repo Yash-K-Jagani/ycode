@@ -9,6 +9,7 @@ import (
 
 	"github.com/Yash-K-Jagani/ycode/internal/batch"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
+	"github.com/Yash-K-Jagani/ycode/internal/goal"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
@@ -67,6 +68,19 @@ func (m *Model) sidebar(height int) string {
 		spend = fmt.Sprintf("free local · $%.4f today (cloud)", today)
 	}
 	fmt.Fprintf(&b, "%s\n", val.Render(spend))
+	sec("goal")
+	if m.goal == nil {
+		b.WriteString(dim.Render("no goal — /goal <text>") + "\n")
+	} else {
+		b.WriteString(val.Render(truncSide(oneLine(m.goal.Text))) + "\n")
+		meter := fmt.Sprintf("iter %d/%d", m.goal.Iter, m.goal.MaxIter)
+		if m.goal.Status != goal.Active {
+			meter += " · " + string(m.goal.Status)
+		} else if m.goal.Running() {
+			meter += " · running"
+		}
+		b.WriteString(dim.Render(truncSide(meter)) + "\n")
+	}
 	sec("tasks")
 	todos := tools.ReadTodos(m.workdir)
 	if len(todos) == 0 {
@@ -122,3 +136,6 @@ func truncSide(s string) string {
 	}
 	return s
 }
+
+// oneLine collapses whitespace so a long goal wraps to a single sidebar row.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

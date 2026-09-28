@@ -24,6 +24,7 @@ import (
 	yctx "github.com/Yash-K-Jagani/ycode/internal/context"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/embed"
+	"github.com/Yash-K-Jagani/ycode/internal/goal"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/mcp"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
@@ -96,6 +97,7 @@ type Model struct {
 	cancelled  bool
 
 	pendingPlan string
+	goal        *goal.Goal
 
 	sideOn         bool
 	sessPTok       int
@@ -127,7 +129,10 @@ type doneMsg struct {
 	ctxB  int
 	calls int
 	oks   int
+	fails int
+	work  int
 	agent bool
+	mode  modes.Mode
 }
 
 // noSuccessNote explains a tool-less turn honestly (names failures).
@@ -618,23 +623,46 @@ func (m *Model) submit() tea.Cmd {
 		}
 		return cmd
 	}
-	m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
+	return m.startTurn(text, turnOpts{})
+}
+
+// turnOpts controls one turn of work. Auto turns are synthetic continuations
+// (goal mode): they carry no user message into the transcript, only a system
+// nudge, so the run leaves one clean record of the goal instead of a dozen
+// "continue" prompts.
+type turnOpts struct {
+	auto  bool
+	nudge string
+}
+
+// startTurn appends the user message, builds the system prompt and runs the
+// provider turn (streaming with or without the tool loop).
+func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
+	if !o.auto {
+		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
+	}
 	expanded, missing := expandAttachments(m.workdir, text)
 	for _, miss := range missing {
 		m.appendSys("attachment skipped: " + miss)
 	}
-	m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleUser, text))
-	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-	m.vp.GotoBottom()
+	if !o.auto {
+		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleUser, text))
+		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
+		m.vp.GotoBottom()
+	}
 	m.busy = true
 	m.busySince = time.Now()
 	m.stream.Reset()
 	spinCmd := m.sp.Tick
 	hist := append([]apitypes.Message(nil), m.sess.Messages...)
 	userText := text
-	if expanded != text {
-		userText = expanded
-		hist[len(hist)-1].Content = expanded
+	if !o.auto {
+		if expanded != text {
+			userText = expanded
+			hist[len(hist)-1].Content = expanded
+		}
+	} else if o.nudge != "" {
+		hist = append(hist, apitypes.Message{Role: apitypes.RoleSystem, Content: o.nudge})
 	}
 	prog := m.prog
 	mode := m.mode
@@ -646,6 +674,13 @@ func (m *Model) submit() tea.Cmd {
 	skill := m.pendingSkill
 	m.pendingSkill = ""
 	mcpNames := append([]string(nil), m.mcpNames...)
+	rounds := modes.Rounds(mode)
+	// Snapshot the goal block on the UI thread: the run advances between
+	// turns, so building it inside the turn goroutine would race it.
+	goalBlock := ""
+	if mode == modes.Goal && m.goal != nil {
+		goalBlock = m.goal.PromptBlock(goalTodoBlock(m.workdir), m.pendingPlan)
+	}
 	hookset.Fire(context.Background(), hooks.OnRequest, map[string]string{"mode": string(mode), "workdir": workdir})
 	turnCtx, turnCancel := context.WithCancel(context.Background())
 	m.turnCancel = turnCancel
@@ -662,6 +697,8 @@ func (m *Model) submit() tea.Cmd {
 		}
 		toolCalls := 0
 		toolOK := 0
+		toolFail := 0
+		workOK := 0
 		var acted []fileAct
 		written := 0
 		toolBytes := 0
@@ -675,12 +712,17 @@ func (m *Model) submit() tea.Cmd {
 			toolCalls++
 			if err == nil {
 				toolOK++
+				if goal.IsWorkTool(name) {
+					workOK++
+				}
 				switch name {
 				case "write", "create", "add", "edit", "remove", "delete":
 					if p := writeOpPath(args); p != "" {
 						acted = append(acted, fileAct{op: name, path: p})
 					}
 				}
+			} else {
+				toolFail++
 			}
 			toolBytes += len(result)
 			status := fmt.Sprintf("ok (%d bytes)", len(result))
@@ -706,6 +748,9 @@ func (m *Model) submit() tea.Cmd {
 		if skill != "" {
 			sys += "\nActive skill instructions:\n" + skill
 		}
+		if goalBlock != "" {
+			sys += goalBlock
+		}
 		if mode == modes.Build && m.pendingPlan != "" && isBuildIt(userText) {
 			sys += "\nApproved plan from the earlier planning turn (user said build it) — implement it step by step with tools, in order:\n" + m.pendingPlan
 			m.pendingPlan = ""
@@ -713,7 +758,7 @@ func (m *Model) submit() tea.Cmd {
 				prog.Send(sysMsg("Building the approved plan…"))
 			}
 		}
-		if mode == modes.Build || mode == modes.Plan {
+		if modes.UsesRepoContext(mode) {
 			sys += "\nRepo tree (" + workdir + ") — real paths, use them directly:\n" + yctx.Tree(workdir, 150, 4000) +
 				"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
 			if brief := yctx.Brief(workdir); brief != "" {
@@ -759,7 +804,7 @@ func (m *Model) submit() tea.Cmd {
 			}
 			if hit, ok := m.semCache.Lookup(ctx, userText, m.cfg.ActiveProvider, model); ok {
 				est := yctx.Estimate([]apitypes.Message{{Role: apitypes.RoleUser, Content: userText}})
-				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)", ctx: est, ctxB: yctx.BudgetFor(model)}
+				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)", ctx: est, ctxB: yctx.BudgetFor(model), mode: mode}
 			}
 			full, fbNote, err := m.router.StreamWithFallback(ctx, msgs, w)
 			if err != nil {
@@ -788,7 +833,7 @@ func (m *Model) submit() tea.Cmd {
 					prog.Send(resetStreamMsg{})
 					prog.Send(sysMsg("↳ retrying turn on fallback " + cand.label))
 				}
-				res, err := agent.Run(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool)
+				res, err := agent.RunWithRounds(ctx, cand.p, cand.model, msgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 				turnCalls += res.Calls
 				if err != nil && res.Text == "" {
 					if i < len(chain)-1 {
@@ -852,7 +897,7 @@ func (m *Model) submit() tea.Cmd {
 					retryMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: retryNudge})
-					res2, err2 := agent.Run(ctx, cand.p, cand.model, retryMsgs, reg, allowed, hookset, w, onTool)
+					res2, err2 := agent.RunWithRounds(ctx, cand.p, cand.model, retryMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 					turnCalls += res2.Calls
 					if turnCalls > callsBefore && (err2 == nil || res2.Text != "") {
 						answer = res2.Text
@@ -873,7 +918,7 @@ func (m *Model) submit() tea.Cmd {
 					vRFMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: verifyFact(fails)})
-					res3, err3 := agent.Run(ctx, cand.p, cand.model, vRFMsgs, reg, allowed, hookset, w, onTool)
+					res3, err3 := agent.RunWithRounds(ctx, cand.p, cand.model, vRFMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
 					turnCalls += res3.Calls
 					if turnCalls > vCallsBefore && (err3 == nil || res3.Text != "") {
 						answer = res3.Text
@@ -902,7 +947,7 @@ func (m *Model) submit() tea.Cmd {
 			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
-		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, agent: len(allowed) > 0}
+		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, fails: toolFail, work: workOK, agent: len(allowed) > 0, mode: mode}
 	}
 	return tea.Batch(spinCmd, turn)
 }
@@ -954,7 +999,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.router.Update(m.cfg)
 					_ = m.cfg.Save()
 					m.renderAll()
-					m.appendSys("Resumed " + s.Title)
+					m.goal = nil
+					m.appendSys("Resumed " + s.Title + " (/goal <text> to start a new goal)")
 				}
 				m.sessionsModal = nil
 				return m, nil
@@ -1070,9 +1116,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.turnCancel = nil
 		if m.cancelled {
 			m.cancelled = false
+			m.stopGoalRun()
 			m.stream.Reset()
 			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 			m.vp.GotoBottom()
+			m.noteGoalStop()
 			return m, nil
 		}
 		_ = sessions.MaybeAutoTitle(m.sess)
@@ -1103,12 +1151,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.hookset.Fire(context.Background(), hooks.OnResponse, map[string]string{"mode": string(m.mode), "workdir": m.workdir})
 		webhooks.Fire("turn_complete", map[string]any{"mode": string(m.mode), "provider": m.cfg.ActiveProvider, "model": m.cfg.ActiveModel})
+		if cont := m.advanceGoal(msg); cont != nil {
+			return m, cont
+		}
 		return m, nil
 	case errMsg:
 		m.busy = false
 		m.turnCancel = nil
 		if m.cancelled {
 			m.cancelled = false
+			m.stopGoalRun()
+			m.noteGoalStop()
 			m.stream.Reset()
 			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 			m.vp.GotoBottom()
@@ -1116,6 +1169,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.stream.Reset()
 		m.appendSys("error: " + msg.err.Error())
+		// A failed turn ends the run: continuing on the same error would
+		// burn the iteration budget silently.
+		if m.goal != nil && m.goal.Status == goal.Active {
+			m.goal.Status = goal.Blocked
+			m.noteGoalStop()
+		}
 		if out := m.hookset.Fire(context.Background(), hooks.OnError, map[string]string{"error": msg.err.Error()}); out != "" {
 			m.appendSys(out)
 		}
@@ -1270,7 +1329,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stream.Reset()
 				m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
 				m.vp.GotoBottom()
-				m.appendSys("(stopped — partial output discarded, Ctrl+C/Esc again to quit)")
+				if g := m.goal; g != nil && g.Running() {
+					m.appendSys("(stopped — the goal run is cancelled with it; Esc again to quit)")
+				} else {
+					m.appendSys("(stopped — partial output discarded, Ctrl+C/Esc again to quit)")
+				}
 				return m, nil
 			}
 			_ = m.sess.Save()
@@ -1282,6 +1345,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = m.sess.Save()
 			m.msgs = nil
 			m.pendingPlan = ""
+			m.goal = nil
 			m.vp.SetContent("")
 			m.appendSys("New session started.")
 			return m, nil
@@ -1358,6 +1422,13 @@ func (m Model) View() string {
 	}
 	chip := lipgloss.NewStyle().Bold(true).Foreground(m.th.Accent).Render("▸ "+string(m.mode)) +
 		lipgloss.NewStyle().Foreground(m.th.Dim).Render(" · "+m.agent.Name+" · tab: switch mode")
+	if g := m.goal; g != nil {
+		st := lipgloss.NewStyle().Foreground(m.th.Dim)
+		if g.Status == goal.Active && g.Running() {
+			st = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#2de1a7"))
+		}
+		chip += st.Render(fmt.Sprintf(" · goal %d/%d %s", g.Iter, g.MaxIter, g.Status))
+	}
 	if m.watching() {
 		chip += lipgloss.NewStyle().Foreground(lipgloss.Color("#2de1a7")).Render(" · ● watching " + m.watchTarget)
 	}

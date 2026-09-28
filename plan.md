@@ -72,11 +72,14 @@ ycode/
 │   │   ├── keymap.go             # opencode-compatible keybindings
 │   │   ├── slash.go              # "/" command registry & completion
 │   │   └── theme/                # Theme manager + built-in themes
-│   ├── modes/                    # Plan / Build / Chat / Thinking
+│   ├── modes/                    # Plan / Goal / Build / Chat / Thinking
 │   │   ├── plan.go
+│   │   ├── goal.go
 │   │   ├── build.go
 │   │   ├── chat.go
 │   │   └── thinking.go           # Visible reasoning / scratchpad mode
+│   ├── goal/                     # Goal-mode run state: verdict markers,
+│   │                             # iteration budget, prompt block
 │   ├── config/                   # Viper config load, validate, hot-reload
 │   ├── providers/                # LLM provider abstraction
 │   │   ├── provider.go           # Interface: Stream, Complete, Embed, ListModels
@@ -149,11 +152,12 @@ ycode/
 | Mode | Behavior |
 |---|---|
 | **Plan** | Read-only agent: analyzes the repo, produces a step-by-step plan for approval. No writes until approved. |
+| **Goal** | Unattended run toward a stated goal: turns it into acceptance criteria, works todo steps one iteration at a time, and ends itself with `GOAL MET` or `GOAL BLOCKED: <reason>` (or an iteration budget). Build's tools minus `delete`. |
 | **Build** | Full agent loop: reads files, writes/edits code, runs tests, iterates. |
 | **Chat** | Plain conversation with optional @file / @folder context attachments. |
 | **Thinking** | Deep-reasoning mode: expanded scratchpad, chain-of-thought visible, better for hard debugging/architecture questions. |
 
-Mode is switchable mid-session via keybinding or `/plan`, `/build`, `/chat`, `/thinking` (aliases allowed).
+Mode is switchable mid-session via keybinding or `/plan`, `/goal`, `/build`, `/chat`, `/thinking` (aliases allowed).
 
 ---
 
@@ -184,7 +188,7 @@ All commands live in the `/` palette (inherited style from opencode):
 | `/theme` | Switch UI theme |
 | `/variants` | Switch model variant (e.g., quantized sizes) without losing context |
 
-Plus mode-switch commands (`/plan`, `/build`, `/chat`, `/thinking`) and `/export`, `/undo`, `/redo`.
+Plus mode-switch commands (`/plan`, `/goal`, `/build`, `/chat`, `/thinking`) and `/export`, `/undo`, `/redo`.
 
 ---
 
@@ -279,7 +283,7 @@ Plus mode-switch commands (`/plan`, `/build`, `/chat`, `/thinking`) and `/export
 | `Ctrl+U` | Clear input |
 | `Ctrl+Y` | Redo last edit |
 | `Ctrl+Z` | Undo last edit |
-| `Tab` / `Shift+Tab` | Cycle mode: Plan → Build → Chat → Thinking |
+| `Tab` / `Shift+Tab` | Cycle mode: Plan → Goal → Build → Chat → Thinking |
 | `Esc` | Stop generation / close panel |
 | `↑` / `↓` | Input history |
 | `PageUp/PageDown` | Scroll chat |

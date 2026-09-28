@@ -12,13 +12,14 @@
 | `/undo` | Restore last file change (keeps 20 backups) |
 | `/variants` | Installed Ollama variants + quant guidance |
 | `/sessions` | List; `/sessions <id>` resumes (restores its provider/model), `/sessions fork <id>` branches |
-| `/status` | Mode, tokens, cost today, cache, RAG, latency |
+| `/status` | Mode, goal, tokens, cost today, cache, RAG, latency |
 | `/connect` | Interactive connect: pick provider, paste key, choose model |
 | `/doctor` | Health: tools, Ollama, RAG, cache, model advice (`/doctor fix` repairs) |
 | `/agent [name]` | Pick builder/planner/reviewer |
 | `/init` | Scaffold `.ycode/` + `AGENTS.md` |
 | `/editor [path]` | Open `$EDITOR` without leaving the TUI |
-| `/plan` `/build` `/chat` `/thinking` | Switch mode (or Tab) |
+| `/plan` `/goal` `/build` `/chat` `/thinking` | Switch mode (or Tab) |
+| `/goal [text]` | Goal mode: with text, set the goal and start working it unattended; without, show the current goal |
 | `/review [path]` | AI review of `git diff` (`/review --post <pr>` posts inline review comments) |
 | `/test [path] [filter]` | Run project tests, optionally one test by name (`/test --watch [path]` re-runs on save, `/test stop` ends) |
 | `/refactor <goal>` | Checkpoint branch + armed instruction |
@@ -30,8 +31,20 @@
 | `/plugins [install|reload]` | Script plugins (install accepts git URL, owner/repo, or local dir) |
 | `/store [list|search|install|remove|verify|update]` | Curated skill/plugin store |
 
-Modes: **build** (all tools), **plan** (read-only tools), **chat**/**thinking** (no tools).
+Modes: **build** (all tools), **goal** (all but `delete`), **plan** (read-only tools), **chat**/**thinking** (no tools).
 Plan flow: plan mode asks clarifying questions when vague, then writes a plan ending in `AWAITING APPROVAL`. Switch to build and say **build it** to implement the approved plan.
+
+Goal flow: `/goal add a healthcheck endpoint` switches to goal mode and starts
+working immediately. The agent restates the goal as acceptance criteria, records
+them in the todo list (sidebar), and works one step per iteration — no
+questions, no waiting for you. It ends the run itself with `GOAL MET` (with
+evidence per criterion), `GOAL BLOCKED: <reason>`, or gives up when the
+12-iteration budget runs out. The goal and the iteration counter live in the
+sidebar and `/status`; `Esc` stops a run, and starting a new goal or session
+clears it (goals are not persisted).
+
+The task list is the goal's own: `/goal` clears the previous one so a stale
+step list can't send the run down the wrong path.
 
 Type `@` in the input for path completion — attached files are inlined into
 your message (24KB each, 5 max; `@dir` attaches a listing).

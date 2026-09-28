@@ -770,35 +770,15 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
-		sys := modes.SystemPrompt(mode, reg, workdir, model) + "\nActive agent: " + ag.Name + " — " + ag.Prompt
-		if skill != "" {
-			sys += "\nActive skill instructions:\n" + skill
-		}
-		if goalBlock != "" {
-			sys += goalBlock
-		}
-		if mode == modes.Build && m.pendingPlan != "" && isBuildIt(userText) {
-			sys += "\nApproved plan from the earlier planning turn (user said build it) — implement it step by step with tools, in order:\n" + m.pendingPlan
-			m.pendingPlan = ""
-			if prog != nil {
-				prog.Send(sysMsg("Building the approved plan…"))
-			}
-		}
-		if modes.UsesRepoContext(mode) {
-			sys += "\nRepo tree (" + workdir + ") — real paths, use them directly:\n" + yctx.Tree(workdir, 150, 4000) +
-				"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
-			if brief := yctx.Brief(workdir); brief != "" {
-				sys += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
-			}
-		}
-		// Local RAG: retrieve repo context when an index exists.
-		ragNote := ""
+		// Retrieve RAG first: it feeds the system prompt, so it has to happen
+		// before the prompt is assembled.
+		ragNote, ragContext := "", ""
 		if !m.ragOff {
 			if idx, ok := rag.Load(workdir); ok {
 				if qv, err := m.embedder.Embed(ctx, []string{userText}); err == nil && len(qv) > 0 {
 					if chunks := rag.Query(idx, qv[0], 4); len(chunks) > 0 {
-						sys += "\n" + rag.FormatContext(chunks)
-						ragNote = fmt.Sprintf(" · RAG %d chunks", len(chunks))
+						ragContext = rag.FormatContext(chunks)
+						ragNote = fmt.Sprintf("RAG %d chunks", len(chunks))
 					}
 				} else if err != nil {
 					m.ragOff = true
@@ -808,6 +788,30 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				}
 			}
 		}
+
+		// The plan carries over only when the user actually asked for it.
+		planForPrompt := m.pendingPlan
+		carryPlan := mode == modes.Build && planForPrompt != "" && isBuildIt(userText)
+		if carryPlan {
+			m.pendingPlan = ""
+			if prog != nil {
+				prog.Send(sysMsg("Building the approved plan…"))
+			}
+		}
+		sys := agent.BuildSystem(agent.SystemOptions{
+			Mode:        mode,
+			Registry:    reg,
+			Workdir:     workdir,
+			Model:       model,
+			Agent:       ag.Name,
+			Skill:       skill,
+			GoalBlock:   goalBlock,
+			PendingPlan: planForPrompt,
+			CarryPlan:   carryPlan,
+			RagContext:  ragContext,
+			ZeroLeak:    zdl,
+		})
+
 		budget := yctx.BudgetFor(model)
 		trimmed, dropped := yctx.Trim(hist, budget-1500)
 		if dropped > 0 && prog != nil {
@@ -818,10 +822,6 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		allowed := modes.AllowedTools(mode, append(mcpNames, m.pluginNames...)...)
 		if zdl {
 			allowed = filterNetworkTools(allowed)
-			sys += "\nZERO-DATA-LEAK: local only. Cloud providers are blocked, and so is every tool that reaches the network " +
-				"(api, browser, github, git, db, notebook, scaffold, mcp__*, plugin__*). " +
-				"bash and run still execute arbitrary commands, so treat this as a guardrail against accidents, not a sandbox."
-			msgs[0].Content = sys
 		}
 		notes := []string{fmt.Sprintf("~%d tokens", promptTok)}
 		var answer string
@@ -976,7 +976,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		_, _, usd := tracker.Today()
 		notes = append(notes, fmt.Sprintf("$%.4f today", usd))
 		if ragNote != "" {
-			notes = append(notes, strings.TrimPrefix(ragNote, " · "))
+			notes = append(notes, ragNote)
 		}
 		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
 		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, fails: toolFail, work: workOK, agent: len(allowed) > 0, mode: mode}

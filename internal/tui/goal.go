@@ -14,39 +14,24 @@ import (
 // goalTodoBlock renders the workdir task list for the goal prompt: done steps
 // stay visible (so the model doesn't redo them) but the open ones come last.
 func goalTodoBlock(workdir string) string {
-	items := tools.ReadTodos(workdir)
-	if len(items) == 0 {
-		return ""
-	}
-	var open, done []string
-	for _, t := range items {
-		line := fmt.Sprintf("[%s] %d. %s", mark(t.Done), t.ID, t.Text)
-		if t.Done {
-			done = append(done, line)
-		} else {
-			open = append(open, line)
-		}
-	}
-	return strings.Join(append(done, open...), "\n")
+	return goal.TaskBlock(taskList(workdir))
 }
 
-func mark(done bool) string {
-	if done {
-		return "x"
+// taskList reads the workdir task list into the goal package's own type, so the
+// TUI and headless run paths cannot disagree about what the task list means.
+func taskList(workdir string) []goal.TaskList {
+	items := tools.ReadTodos(workdir)
+	out := make([]goal.TaskList, 0, len(items))
+	for _, it := range items {
+		out = append(out, goal.TaskList{ID: it.ID, Text: it.Text, Done: it.Done})
 	}
-	return " "
+	return out
 }
 
 // openSteps counts unfinished task-list entries. In goal mode this is the
 // harness's independent check on a claimed GOAL MET.
 func openSteps(workdir string) int {
-	n := 0
-	for _, t := range tools.ReadTodos(workdir) {
-		if !t.Done {
-			n++
-		}
-	}
-	return n
+	return goal.OpenSteps(taskList(workdir))
 }
 
 // advanceGoal decides what a finished goal-mode turn does next. It returns a

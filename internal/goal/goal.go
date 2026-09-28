@@ -9,6 +9,7 @@ package goal
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -168,6 +169,48 @@ var workTools = map[string]bool{
 
 // IsWorkTool reports whether a tool mutates the project (or runs something).
 func IsWorkTool(name string) bool { return workTools[strings.ToLower(name)] }
+
+// TaskList is the subset of a todo entry the goal loop needs, so this package
+// does not import the tools package (which would cycle: tools imports agent).
+type TaskList struct {
+	ID   int
+	Text string
+	Done bool
+}
+
+// OpenSteps counts unfinished steps in the goal's task list. In goal mode this
+// is the harness's independent check on a claimed GOAL MET.
+func OpenSteps(items []TaskList) int {
+	n := 0
+	for _, it := range items {
+		if !it.Done {
+			n++
+		}
+	}
+	return n
+}
+
+// TaskBlock renders the task list for the prompt: completed steps stay visible
+// so the model does not redo them, and the open ones come last.
+func TaskBlock(items []TaskList) string {
+	if len(items) == 0 {
+		return ""
+	}
+	var open, done []string
+	for _, it := range items {
+		mark := " "
+		if it.Done {
+			mark = "x"
+		}
+		line := "[" + mark + "] " + strconv.Itoa(it.ID) + ". " + it.Text
+		if it.Done {
+			done = append(done, line)
+		} else {
+			open = append(open, line)
+		}
+	}
+	return strings.Join(append(done, open...), "\n")
+}
 
 // Evidence is what the harness itself observed about a turn. It exists so a
 // model's GOAL MET claim can be checked against something other than the

@@ -37,14 +37,22 @@ const goalMaxIters = 6
 // openSteps counts unfinished task-list entries: in goal mode this is the
 // harness's independent check on a claimed GOAL MET.
 func openSteps(workdir string) int {
-	n := 0
-	for _, t := range tools.ReadTodos(workdir) {
-		if !t.Done {
-			n++
-		}
-	}
-	return n
+	return goal.OpenSteps(taskList(workdir))
 }
+
+// taskList reads the workdir task list into the goal package's own type, so
+// the two run paths (TUI and headless) cannot disagree about what "open
+// steps" means.
+func taskList(workdir string) []goal.TaskList {
+	items := tools.ReadTodos(workdir)
+	out := make([]goal.TaskList, 0, len(items))
+	for _, it := range items {
+		out = append(out, goal.TaskList{ID: it.ID, Text: it.Text, Done: it.Done})
+	}
+	return out
+}
+
+func todoBlock(workdir string) string { return goal.TaskBlock(taskList(workdir)) }
 
 func (o *Options) withDefaults() {
 	if o.Mode == "" {
@@ -141,15 +149,15 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
 	allowed := modes.AllowedTools(o.Mode)
-	sys := modes.SystemPrompt(o.Mode, reg, o.Workdir, cfg.ActiveModel) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
-		"\nHEADLESS: no interactive user. Do the task, verify with tools, output the final result."
-	if modes.UsesRepoContext(o.Mode) {
-		sys += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +
-			"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
-		if brief := yctx.Brief(o.Workdir); brief != "" {
-			sys += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
-		}
-	}
+	sys := agent.BuildSystem(agent.SystemOptions{
+		Mode:     o.Mode,
+		Registry: reg,
+		Workdir:  o.Workdir,
+		Model:    cfg.ActiveModel,
+		Agent:    ag.Name,
+		Headless: true,
+		ZeroLeak: cfg.ZeroDataLeak,
+	})
 	msgs := []apitypes.Message{
 		{Role: apitypes.RoleSystem, Content: sys},
 		{Role: apitypes.RoleUser, Content: prompt},
@@ -227,21 +235,25 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
 	allowed := modes.AllowedTools(o.Mode)
-	base := modes.SystemPrompt(o.Mode, reg, o.Workdir, cfg.ActiveModel) + "\nActive agent: " + ag.Name + " — " + ag.Prompt +
-		"\nHEADLESS: no interactive user. Do the task, verify with tools, output the final result."
-	if modes.UsesRepoContext(o.Mode) {
-		base += "\nRepo tree (" + o.Workdir + ") — real paths, use them directly:\n" + yctx.Tree(o.Workdir, 150, 4000) +
-			"NEVER ask the user for paths or locations. If a file is named without a path, find it with glob/grep yourself."
-		if brief := yctx.Brief(o.Workdir); brief != "" {
-			base += "\nCodebase brief (what this repo is, its rules, git state):\n" + brief
-		}
-	}
+	// The goal block is part of the prompt, so it goes through the shared
+	// builder: the headless goal run and the TUI goal run should show the
+	// model exactly the same thing.
+	base := agent.BuildSystem(agent.SystemOptions{
+		Mode:      o.Mode,
+		Registry:  reg,
+		Workdir:   o.Workdir,
+		Model:     cfg.ActiveModel,
+		Agent:     ag.Name,
+		Headless:  true,
+		GoalBlock: g.PromptBlock(todoBlock(o.Workdir), ""),
+		ZeroLeak:  cfg.ZeroDataLeak,
+	})
 	hookset := hooks.Load()
 	log := o.Stderr
 	rounds := modes.Rounds(o.Mode)
 
 	msgs := []apitypes.Message{
-		{Role: apitypes.RoleSystem, Content: base + g.PromptBlock("", "")},
+		{Role: apitypes.RoleSystem, Content: base},
 		{Role: apitypes.RoleUser, Content: g.Text},
 	}
 	hookset.Fire(ctx, hooks.OnRequest, map[string]string{"mode": string(o.Mode), "workdir": o.Workdir, "headless": "true"})

@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 // tryFormat best-effort formats a file after write/edit.
@@ -35,8 +37,8 @@ func tryFormat(path string) string {
 	if note == "" {
 		note = err.Error()
 	}
-	if len(note) > 120 {
-		note = note[:120] + "…"
+	if len([]rune(note)) > 120 {
+		note = textutil.Truncate(note, 120)
 	}
 	return " · not formatted: " + note
 }

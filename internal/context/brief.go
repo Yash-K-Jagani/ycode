@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"time"
 )
 
@@ -24,8 +26,10 @@ func Brief(workdir string) string {
 		b.WriteString("\nGIT:\n" + gs + "\n")
 	}
 	out := strings.TrimSpace(b.String())
-	if len(out) > 2000 {
-		out = out[:2000] + "\n…(trimmed)"
+	// Rune-aware: this goes into every prompt, and cutting an AGENTS.md mid
+	// character would hand the model invalid UTF-8.
+	if len([]rune(out)) > 2000 {
+		out = textutil.Truncate(out, 2000) + "\n...(trimmed)"
 	}
 	return out
 }
@@ -41,8 +45,8 @@ func readHead(workdir string, names []string, maxLines, maxChars int) string {
 			lines = lines[:maxLines]
 		}
 		s := strings.TrimSpace(strings.Join(lines, "\n"))
-		if len(s) > maxChars {
-			s = s[:maxChars]
+		if len([]rune(s)) > maxChars {
+			s = textutil.Truncate(s, maxChars)
 		}
 		if s != "" {
 			return s

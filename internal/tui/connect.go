@@ -84,11 +84,16 @@ func newConnect() *connectFlow {
 	return &connectFlow{step: cStepProvider, provs: connectProviders(), keyInput: ti}
 }
 
+// maskKey hides all but the first two and last four characters of a
+// credential. Rune-aware, because a partial character at either end would leak
+// a fragment of the secret into the transcript.
 func maskKey(s string) string {
-	if len(s) <= 8 {
-		return "•••"
+	const dots = "•••"
+	r := []rune(s)
+	if len(r) <= 8 {
+		return dots
 	}
-	return s[:2] + "•••" + s[len(s)-4:]
+	return string(r[:2]) + dots + string(r[len(r)-4:])
 }
 
 // fetchModelsCmd verifies the credential and lists models (registry fallback).

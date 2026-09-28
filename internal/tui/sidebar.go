@@ -11,6 +11,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/batch"
 	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/goal"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 )
 
@@ -171,12 +172,10 @@ func (m *Model) sidebar(height int) string {
 		Render(strings.TrimRight(body, "\n"))
 }
 
-func truncSide(s string) string {
-	if len(s) > sideWidth-6 {
-		return s[:sideWidth-9] + "…"
-	}
-	return s
-}
+// truncSide shortens a value to fit the sidebar panel. Rune-aware: the sidebar
+// shows file paths and folder names, which are routinely non-ASCII, and a byte
+// slice would cut a character in half and break the panel border.
+func truncSide(s string) string { return textutil.Truncate(s, sideWidth-9) }
 
 // oneLine collapses whitespace so a long goal wraps to a single sidebar row.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

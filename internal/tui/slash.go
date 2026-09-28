@@ -29,6 +29,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/store"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 )
@@ -640,8 +641,8 @@ func slashRegistry() map[string]slashHandler {
 			}
 			raw, _ := json.Marshal(payload)
 			out, err := (&tools.TestGenTool{Workdir: m.workdir}).Run(ctx, raw)
-			if len(out) > 6000 {
-				out = out[:6000] + "\n…(truncated)"
+			if len([]rune(out)) > 6000 {
+				out = textutil.Truncate(out, 6000) + "\n…(truncated)"
 			}
 			if err != nil {
 				return "Tests FAILED:\n" + out + "\nTip: switch to /build and ask the model to fix them.", nil
@@ -995,8 +996,8 @@ func ragLoad(m *Model) (rag.Index, bool) {
 }
 
 func truncateForRag(s string) string {
-	if len(s) > 1200 {
-		return s[:1200] + "\n…"
+	if len([]rune(s)) > 1200 {
+		return textutil.Truncate(s, 1200) + "\n…"
 	}
 	return s
 }

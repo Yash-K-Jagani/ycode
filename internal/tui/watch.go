@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -52,8 +54,8 @@ func (m *Model) startWatch(target string) {
 func (m *Model) runWatchedTests() string {
 	raw, _ := json.Marshal(map[string]string{"path": m.watchTarget})
 	out, err := (&tools.TestGenTool{Workdir: m.workdir}).Run(context.Background(), raw)
-	if len(out) > 4000 {
-		out = out[:4000] + "\n…(truncated)"
+	if len([]rune(out)) > 4000 {
+		out = textutil.Truncate(out, 4000) + "\n…(truncated)"
 	}
 	if err != nil {
 		return "watch: FAILED\n" + out

@@ -25,6 +25,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/serve"
 	"github.com/Yash-K-Jagani/ycode/internal/skills"
 	"github.com/Yash-K-Jagani/ycode/internal/store"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/spf13/cobra"
 )
 
@@ -282,12 +283,10 @@ func storeCmd() *cobra.Command {
 	return c
 }
 
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n] + "…"
-	}
-	return s
-}
+// truncate shortens s for display. Rune-aware: batch prompts and test output
+// routinely contain non-ASCII, and a byte slice would emit invalid UTF-8 into
+// a terminal or a PR comment.
+func truncate(s string, n int) string { return textutil.Truncate(s, n) }
 
 func doctorCmd() *cobra.Command {
 	var fix bool

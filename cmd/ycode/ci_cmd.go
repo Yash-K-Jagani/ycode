@@ -15,6 +15,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/headless"
 	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/spf13/cobra"
 )
@@ -54,8 +55,10 @@ func ciSummary() (string, bool) {
 	if derr != nil || strings.TrimSpace(diff) == "" || diff == "(clean)" {
 		b.WriteString("Diff: (clean or unavailable)\n")
 	} else {
-		if len(diff) > 20000 {
-			diff = diff[:20000] + "\n…(truncated)"
+		// A byte slice here would cut a diff mid-character and send invalid
+		// UTF-8 to the model and into the PR comment.
+		if len([]rune(diff)) > 20000 {
+			diff = textutil.Truncate(diff, 20000) + "\n...(truncated)"
 		}
 		answer, err := headless.Run(ctx, cfg, "Review this diff briefly (summary + top risks):\n```diff\n"+diff+"\n```", headless.Options{Mode: modes.Chat, Workdir: workdir, Stderr: os.Stderr})
 		if err != nil {

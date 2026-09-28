@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"time"
 )
 
@@ -409,8 +411,5 @@ func budgetLine(g *Goal) string {
 
 func oneLine(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 120 {
-		return s[:117] + "…"
-	}
-	return s
+	return textutil.Truncate(s, 120)
 }

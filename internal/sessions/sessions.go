@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
@@ -88,8 +90,8 @@ func DeriveTitle(text string) string {
 	if t == "" {
 		return ""
 	}
-	if len(t) > 40 {
-		t = t[:40] + "…"
+	if len([]rune(t)) > 40 {
+		t = textutil.Truncate(t, 40)
 	}
 	return t
 }

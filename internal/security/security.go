@@ -5,6 +5,8 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 )
 
 type Finding struct {
@@ -182,8 +184,5 @@ func FormatFindings(fs []Finding) string {
 
 func truncate(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) > 160 {
-		return s[:160] + "…"
-	}
-	return s
+	return textutil.Truncate(s, 160)
 }

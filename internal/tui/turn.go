@@ -14,6 +14,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
+	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 	tea "github.com/charmbracelet/bubbletea"
@@ -387,8 +388,5 @@ func allProvidersFailed(attempts []string) error {
 
 func truncateArgs(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 120 {
-		return s[:120] + "…"
-	}
-	return s
+	return textutil.Truncate(s, 120)
 }

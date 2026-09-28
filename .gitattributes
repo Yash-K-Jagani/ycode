@@ -1,0 +1,19 @@
+# Line endings for Go source.
+#
+# The repository stores LF. With core.autocrlf=true on Windows, git checks Go
+# files out as CRLF, and gofmt then reports every one of them as unformatted -
+# so `gofmt -l .` passed or failed depending on whether git happened to have
+# touched the file recently. Pinning the working tree to LF makes the check
+# mean the same thing for everyone.
+*.go text eol=lf
+
+# Keep diffs honest for the files where a stray CRLF would matter most.
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Generated or binary: never line-ending translated.
+*.png binary
+*.jpg binary
+*.gguf binary

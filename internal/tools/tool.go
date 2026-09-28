@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 )
 
 func isWindows() bool { return runtime.GOOS == "windows" }
@@ -20,7 +21,16 @@ type Tool interface {
 	Run(ctx context.Context, args json.RawMessage) (string, error)
 }
 
+// Registry is the tool set the agent may call.
+//
+// It is mutated at runtime: the TUI adds MCP tools and script plugins while a
+// turn may be streaming (the turn goroutine reads the registry on every tool
+// call and again when building the system prompt). An unsynchronized map there
+// is a "fatal error: concurrent map read and map write", which kills the
+// process mid-turn and loses the unsaved transcript — so every method is
+// guarded. Reads dominate, hence RWMutex.
 type Registry struct {
+	mu    sync.RWMutex
 	tools map[string]Tool
 	order []string
 }
@@ -28,15 +38,27 @@ type Registry struct {
 func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
 
 func (r *Registry) Add(t Tool) {
+	if t == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.tools[t.Name()]; !ok {
 		r.order = append(r.order, t.Name())
 	}
 	r.tools[t.Name()] = t
 }
 
-func (r *Registry) Get(name string) (Tool, bool) { t, ok := r.tools[name]; return t, ok }
+func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	t, ok := r.tools[name]
+	return t, ok
+}
 
 func (r *Registry) Remove(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.tools[name]; !ok {
 		return
 	}
@@ -51,6 +73,8 @@ func (r *Registry) Remove(name string) {
 }
 
 func (r *Registry) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := append([]string(nil), r.order...)
 	sort.Strings(out)
 	return out

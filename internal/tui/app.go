@@ -1208,8 +1208,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toolreg.Add(t)
 			added++
 		}
-		m.mcpNames = append(m.mcpNames, msg.names...)
-		m.appendSys(fmt.Sprintf("mcp: loaded %d tools", added))
+		// Dedup: /mcps tools is reloadable, and every duplicate name would be
+		// appended to the mode allow-list and then rendered in full into the
+		// system prompt (schema and all), so repeated reloads bloated every
+		// later request until the provider rejected it.
+		seen := make(map[string]bool, len(m.mcpNames))
+		for _, n := range m.mcpNames {
+			seen[n] = true
+		}
+		var fresh []string
+		for _, n := range msg.names {
+			if !seen[n] {
+				seen[n] = true
+				fresh = append(fresh, n)
+			}
+		}
+		m.mcpNames = append(m.mcpNames, fresh...)
+		note := fmt.Sprintf("mcp: loaded %d tools", added)
+		if len(fresh) < len(msg.names) {
+			note += fmt.Sprintf(" (%d already known)", len(msg.names)-len(fresh))
+		}
+		m.appendSys(note)
 		return m, nil
 	case sysMsg:
 		m.appendSys(string(msg))

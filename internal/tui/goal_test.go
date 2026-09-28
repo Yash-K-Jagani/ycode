@@ -248,6 +248,40 @@ func TestGoalMetIsCheckedNotBelieved(t *testing.T) {
 	}
 }
 
+// Reloading MCP tools used to append duplicate names to the allow-list, and
+// every allowed name is rendered in full (schema included) into the system
+// prompt — so repeated /mcps tools bloated each later request until the
+// provider rejected it. Only the names matter here, so the test drives the
+// dedup directly rather than needing real MCP tool adapters.
+func TestMCPReloadDoesNotDuplicateAllowList(t *testing.T) {
+	m := newGoalModel(t)
+	load := func(names ...string) {
+		if _, _ = m.Update(mcpLoadedMsg{names: names}); false {
+			t.Fatal("unreachable")
+		}
+	}
+	load("mcp__srv__a", "mcp__srv__b")
+	if len(m.mcpNames) != 2 {
+		t.Fatalf("mcpNames = %v", m.mcpNames)
+	}
+	// Reload: two already-known names plus one new one.
+	load("mcp__srv__a", "mcp__srv__b", "mcp__srv__c")
+	if len(m.mcpNames) != 3 {
+		t.Fatalf("after reload mcpNames = %v, want 3", m.mcpNames)
+	}
+	// The allow-list is what the prompt is built from, so that is what matters.
+	allowed := modes.AllowedTools(modes.Goal, m.mcpNames...)
+	seen := map[string]int{}
+	for _, n := range allowed {
+		seen[n]++
+	}
+	for n, c := range seen {
+		if c > 1 {
+			t.Fatalf("%s appears %d times in the allow-list", n, c)
+		}
+	}
+}
+
 func TestStopGoalRunIsIdempotent(t *testing.T) {
 	m := newGoalModel(t)
 	m.stopGoalRun()

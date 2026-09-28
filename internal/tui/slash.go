@@ -482,6 +482,9 @@ func slashRegistry() map[string]slashHandler {
 				}
 				return "Removed MCP server " + f[1] + ".", nil
 			case "tools":
+				if m.busy {
+					return "MCP tools load in the background — wait for the current turn to finish (or /mcps tools again).", nil
+				}
 				m.appendSys("Loading MCP tools…")
 				return "", m.loadMCPsCmd()
 			default:

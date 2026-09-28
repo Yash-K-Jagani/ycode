@@ -33,6 +33,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/plugins"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
 	"github.com/Yash-K-Jagani/ycode/internal/router"
 	"github.com/Yash-K-Jagani/ycode/internal/serve"
@@ -141,56 +142,43 @@ func runSetupWizard(cfg *config.Config) bool {
 	fmt.Println("  Let's get you set up. This takes about a minute.")
 	fmt.Println()
 
-	providers := []struct {
-		id, label, keyEnv string
-		needsKey          bool
-	}{
-		{"ollama", "Ollama (local, free, private — recommended)", "", false},
-		{"gemini", "Google Gemini (fast, generous free tier)", cfg.GeminiKeyEnv, true},
-		{"openrouter", "OpenRouter (many models, pay per token)", cfg.OpenRouterKeyEnv, true},
-		{"groq", "Groq (very fast, free tier)", cfg.GroqKeyEnv, true},
-	}
-	for i, p := range providers {
-		fmt.Printf("    %d) %s\n", i+1, p.label)
+	// The picker is the registry, so a provider added there is offered here.
+	choices := providers.All()
+	for i, p := range choices {
+		fmt.Printf("    %d) %s\n", i+1, p.Label)
 	}
 	fmt.Println()
-	idx, ok := promptInt("provider", 1, 1, len(providers))
+	idx, ok := promptInt("provider", 1, 1, len(choices))
 	if !ok {
 		return false
 	}
-	p := providers[idx-1]
-	cfg.ActiveProvider = p.id
+	p := choices[idx-1]
+	cfg.ActiveProvider = p.ID
 
-	if p.needsKey {
-		fmt.Printf("\n  %s API key (input hidden; leave empty to set it later with YCODE=%s)\n", p.id, p.keyEnv)
-		key, ok := promptSecret(p.id + " key")
+	if p.NeedsKey {
+		keyEnv := cfg.KeyEnvFor(p.ID)
+		fmt.Printf("\n  %s API key (input hidden; leave empty to set it later with %s)\n", p.ID, keyEnv)
+		key, ok := promptSecret(p.ID + " key")
 		if !ok {
 			return false
 		}
 		if key == "" {
-			fmt.Printf("\n  No key entered. Set %s in your environment, or run 'ycode setup' again.\n", p.keyEnv)
+			fmt.Printf("\n  No key entered. Set %s in your environment, or run 'ycode setup' again.\n", keyEnv)
 			return false
 		}
-		if err := os.Setenv(p.keyEnv, key); err != nil {
+		if err := os.Setenv(keyEnv, key); err != nil {
 			fmt.Println("could not set env var:", err)
 			return false
 		}
 		// Persist to the OS keyring so later runs find it without the env var.
-		if err := keys.Set(p.keyEnv, key); err != nil {
-			fmt.Println("note: could not store key in OS keyring; set", p.keyEnv, "in your environment instead")
+		if err := keys.Set(keyEnv, key); err != nil {
+			fmt.Println("note: could not store key in OS keyring; set", keyEnv, "in your environment instead")
 		}
-		switch p.id {
-		case "gemini":
-			cfg.GeminiAPIKey = key
-		case "openrouter":
-			cfg.OpenRouterKey = key
-		case "groq":
-			cfg.GroqKey = key
-		}
+		cfg.SetKeyFor(p.ID, key)
 	}
 
 	fmt.Println()
-	model, ok := chooseModel(p.id, cfg)
+	model, ok := chooseModel(p.ID, cfg)
 	if !ok {
 		return false
 	}
@@ -233,7 +221,9 @@ func runSetupRepair(cfg *config.Config, state config.SetupState) bool {
 			return false
 		}
 		_ = keys.Set(state.KeyEnv, key)
-		cfg.GeminiAPIKey, cfg.OpenRouterKey, cfg.GroqKey = key, key, key
+		// Only the active provider's key. Writing it into every provider's
+		// field would later send this secret to hosts the user never chose.
+		cfg.SetKeyFor(cfg.ActiveProvider, key)
 	}
 	// Still unready after the targeted repairs (e.g. an unrecognised
 	// provider): fall back to the full wizard so the user can pick again.
@@ -251,20 +241,25 @@ func runSetupRepair(cfg *config.Config, state config.SetupState) bool {
 }
 
 // chooseModel lists candidate models for the provider and prompts for one. For
-// Ollama it offers to pull a recommended model when the daemon is reachable but
-// empty.
+// a local provider it offers to pull a recommended model when the daemon is
+// reachable but empty.
 func chooseModel(provider string, cfg *config.Config) (string, bool) {
 	const timeout = 5 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// Locality is a registry property, not a name comparison, so a new local
+	// provider is handled without touching this function.
+	local := providers.Local(provider)
+	recommended := providers.DefaultModel(provider)
+
 	var models []string
-	if provider == "ollama" {
+	if local {
 		list, err := ollama.New(cfg.OllamaHost).ListModels(ctx)
 		if err != nil {
 			fmt.Printf("  Could not reach Ollama at %s.\n", cfg.OllamaHost)
 			fmt.Println("  Start it with: ollama serve")
-			fmt.Println("  Then pull a model: ollama pull qwen2.5-coder:7b")
+			fmt.Printf("  Then pull a model: ollama pull %s\n", recommended)
 			return "", false
 		}
 		for _, m := range list {
@@ -272,7 +267,7 @@ func chooseModel(provider string, cfg *config.Config) (string, bool) {
 		}
 	}
 	if len(models) == 0 {
-		if provider != "ollama" {
+		if !local {
 			fmt.Println("  Enter the model id to use (or leave empty to let the provider decide).")
 			m, ok := promptLine("model")
 			if !ok || m == "" {
@@ -281,7 +276,6 @@ func chooseModel(provider string, cfg *config.Config) (string, bool) {
 			return m, true
 		}
 		// Ollama reachable but no models installed.
-		recommended := "qwen2.5-coder:7b"
 		fmt.Println("  Ollama is running but has no models installed.")
 		fmt.Printf("  Recommended for coding: %s (needs ~5 GB)\n", recommended)
 		other, ok := promptLine("model (blank for the recommendation)")
@@ -527,16 +521,21 @@ func configPairs(c config.Config) [][2]string {
 		}
 		return "set"
 	}
-	return [][2]string{
+	out := [][2]string{
 		{"active_provider", c.ActiveProvider},
 		{"active_model", c.ActiveModel},
 		{"ollama_host", c.OllamaHost},
 		{"theme", c.Theme},
 		{"zero_data_leak", strconv.FormatBool(c.ZeroDataLeak)},
-		{"gemini_api_key", secret(c.GeminiAPIKey)},
-		{"openrouter_api_key", secret(c.OpenRouterKey)},
-		{"groq_api_key", secret(c.GroqKey)},
 	}
+	// One row per key-bearing provider, so `ycode config list` and the
+	// keyring routing cannot fall behind the registry.
+	for _, id := range providers.IDs() {
+		if k := c.KeyFor(id); k != "" || providers.Get(id).NeedsKey {
+			out = append(out, [2]string{providerConfigKey(id), secret(k)})
+		}
+	}
+	return out
 }
 
 func configKeys() []string {
@@ -548,47 +547,58 @@ func configKeys() []string {
 }
 
 // isSecretConfigKey reports whether a config key holds a credential, which must
-// be routed to the OS keyring instead of written into config.yaml.
+// be routed to the OS keyring instead of written into config.yaml. Every
+// provider's API key is a secret by the same naming rule.
 func isSecretConfigKey(key string) bool {
-	switch key {
-	case "gemini_api_key", "openrouter_api_key", "groq_api_key":
-		return true
-	}
-	return false
+	_, ok := providerFromConfigKey(key)
+	return ok
 }
 
 // configKeyEnvFor maps a secret config key to the env var name used for both
-// the process environment and the keyring account.
+// the process environment and the keyring account. API keys are named
+// <provider>_api_key, so the rule covers every provider without a case each.
 func configKeyEnvFor(key string) string {
-	switch key {
-	case "gemini_api_key":
-		return config.Defaults().GeminiKeyEnv
-	case "openrouter_api_key":
-		return config.Defaults().OpenRouterKeyEnv
-	case "groq_api_key":
-		return config.Defaults().GroqKeyEnv
+	provider, ok := providerFromConfigKey(key)
+	if !ok {
+		return key
 	}
-	return key
+	return config.Defaults().KeyEnvFor(provider)
 }
 
 // configKeyForEnv is the inverse of configKeyEnvFor, so onboarding can tell the
 // user the exact `ycode config set` invocation to run.
 func configKeyForEnv(env string) string {
 	d := config.Defaults()
-	switch env {
-	case d.GeminiKeyEnv:
-		return "gemini_api_key"
-	case d.OpenRouterKeyEnv:
-		return "openrouter_api_key"
-	case d.GroqKeyEnv:
-		return "groq_api_key"
+	for _, id := range providers.IDs() {
+		if d.KeyEnvFor(id) == env {
+			return providerConfigKey(id)
+		}
 	}
 	return ""
+}
+
+// providerConfigKey is the `ycode config` name for a provider's API key.
+func providerConfigKey(provider string) string { return provider + "_api_key" }
+
+// providerFromConfigKey is the inverse of providerConfigKey.
+func providerFromConfigKey(key string) (string, bool) {
+	for _, id := range providers.IDs() {
+		if providerConfigKey(id) == key {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 // applyConfigValue writes val into the named config field, reporting whether
 // the key was recognised.
 func applyConfigValue(c *config.Config, key, val string) bool {
+	// Every provider's API key follows the same naming rule, so the key goes
+	// to whichever provider owns it rather than to a fixed set of fields.
+	if provider, ok := providerFromConfigKey(key); ok {
+		c.SetKeyFor(provider, val)
+		return true
+	}
 	switch key {
 	case "active_provider":
 		c.ActiveProvider = val
@@ -605,12 +615,6 @@ func applyConfigValue(c *config.Config, key, val string) bool {
 			return true // recognised, just invalid; do not claim "unknown key"
 		}
 		c.ZeroDataLeak = b
-	case "gemini_api_key":
-		c.GeminiAPIKey = val
-	case "openrouter_api_key":
-		c.OpenRouterKey = val
-	case "groq_api_key":
-		c.GroqKey = val
 	default:
 		return false
 	}

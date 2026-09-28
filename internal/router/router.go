@@ -14,10 +14,6 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/db"
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/gemini"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/groq"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
-	"github.com/Yash-K-Jagani/ycode/internal/providers/openrouter"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -33,21 +29,14 @@ func (r *Router) Update(cfg config.Config) { r.cfg = cfg }
 func (r *Router) Stats() *Stats { return r.stats }
 
 func (r *Router) Provider(name string) (providers.Provider, error) {
-	if r.cfg.ZeroDataLeak && name != "ollama" && name != "" {
+	if r.cfg.ZeroDataLeak && !providers.Local(name) {
 		return nil, fmt.Errorf("zero-data-leak mode: cloud provider %q is blocked (local only)", name)
 	}
-	switch name {
-	case "ollama", "":
-		return ollama.New(r.cfg.OllamaHost), nil
-	case "gemini":
-		return gemini.New(r.cfg.GeminiAPIKey), nil
-	case "openrouter":
-		return openrouter.New(r.cfg.OpenRouterKey), nil
-	case "groq":
-		return groq.New(r.cfg.GroqKey), nil
-	default:
+	spec := providers.Get(name)
+	if spec == nil {
 		return nil, fmt.Errorf("unknown provider %q", name)
 	}
+	return spec.New(r.cfg.KeyFor(spec.ID), r.cfg.OllamaHost), nil
 }
 
 func (r *Router) Active() (providers.Provider, string, error) {
@@ -56,13 +45,15 @@ func (r *Router) Active() (providers.Provider, string, error) {
 		return nil, "", err
 	}
 	model := r.cfg.ActiveModel
-	if model == "" && r.cfg.ActiveProvider == "ollama" {
+	// A local provider can enumerate what is installed, so an unset model is
+	// recoverable here; a cloud catalogue is too large to guess at.
+	if model == "" && providers.Local(r.cfg.ActiveProvider) {
 		models, err := p.ListModels(context.Background())
 		if err != nil {
 			return nil, "", err
 		}
 		if len(models) == 0 {
-			return nil, "", fmt.Errorf("no ollama models installed — run: ollama pull qwen2.5-coder:7b-instruct-q4_K_M")
+			return nil, "", fmt.Errorf("no ollama models installed — run: ollama pull %s", providers.DefaultModel("ollama"))
 		}
 		model = models[0].ID
 	}
@@ -86,21 +77,23 @@ func (r *Router) Stream(ctx context.Context, msgs []apitypes.Message, w io.Write
 	return chunk.Delta, nil
 }
 
-// Fallbacks returns other configured cloud providers (have API keys), ranked.
-// Empty in zero-data-leak mode.
+// Fallbacks returns other configured cloud providers (those with an API key),
+// in registry order. Local is excluded: falling back from a local model to a
+// cloud one would leak data even outside zero-data-leak mode, and falling back
+// to a different local model is not something the registry can choose.
 func (r *Router) Fallbacks() []Fallback {
 	if r.cfg.ZeroDataLeak {
 		return nil
 	}
 	var out []Fallback
-	if r.cfg.GeminiAPIKey != "" && r.cfg.ActiveProvider != "gemini" {
-		out = append(out, Fallback{Provider: "gemini", Model: gemini.DefaultModels[0]})
-	}
-	if r.cfg.OpenRouterKey != "" && r.cfg.ActiveProvider != "openrouter" {
-		out = append(out, Fallback{Provider: "openrouter", Model: openrouter.DefaultModels[0]})
-	}
-	if r.cfg.GroqKey != "" && r.cfg.ActiveProvider != "groq" {
-		out = append(out, Fallback{Provider: "groq", Model: groq.DefaultModels[0]})
+	for _, s := range providers.All() {
+		if s.Local || s.ID == r.cfg.ActiveProvider {
+			continue
+		}
+		if r.cfg.KeyFor(s.ID) == "" {
+			continue
+		}
+		out = append(out, Fallback{Provider: s.ID, Model: s.Recommended})
 	}
 	return out
 }

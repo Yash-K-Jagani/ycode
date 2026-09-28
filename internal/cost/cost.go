@@ -10,25 +10,12 @@ import (
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/db"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 )
-
-// USD per 1K tokens (prompt, completion). Local = free.
-var pricing = map[string][2]float64{
-	"gemini":     {0.000075, 0.0003},
-	"openrouter": {0.0001, 0.0003},
-	"groq":       {0.00005, 0.00008},
-	"ollama":     {0, 0},
-}
 
 // Free reports providers with no metered spend and no caps: local compute
 // is unlimited by design — the tracker records volumes only.
-func Free(provider string) bool {
-	p, ok := pricing[provider]
-	if !ok {
-		return false
-	}
-	return p[0] == 0 && p[1] == 0
-}
+func Free(provider string) bool { return providers.Free(provider) }
 
 type dayEntry struct {
 	PromptTok int     `json:"prompt_tokens"`
@@ -68,8 +55,8 @@ func New() *Tracker {
 }
 
 func (t *Tracker) Add(provider string, promptTok, complTok int) float64 {
-	p := pricing[provider]
-	usd := float64(promptTok)/1000*p[0] + float64(complTok)/1000*p[1]
+	promptUSD, complUSD := providers.Pricing(provider)
+	usd := float64(promptTok)/1000*promptUSD + float64(complTok)/1000*complUSD
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	d := time.Now().Format("2006-01-02")

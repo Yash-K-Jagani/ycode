@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/Yash-K-Jagani/ycode/internal/keys"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/spf13/viper"
 )
 
@@ -86,6 +87,59 @@ type SetupState struct {
 	KeyEnv string
 }
 
+// keyAccessors maps a provider to its stored API key. It is the only place
+// that knows which struct field holds a given provider's key, so adding a
+// provider means one row here and one in providers.specs. registry_test.go
+// asserts the two tables agree.
+var keyAccessors = map[string]func(Config) string{
+	"gemini":     func(c Config) string { return c.GeminiAPIKey },
+	"openrouter": func(c Config) string { return c.OpenRouterKey },
+	"groq":       func(c Config) string { return c.GroqKey },
+}
+
+// KeyFor returns the configured API key for a provider, or "" if it has none.
+func (c Config) KeyFor(provider string) string {
+	if f, ok := keyAccessors[provider]; ok {
+		return f(c)
+	}
+	return ""
+}
+
+// SetKeyFor stores an API key against a provider. It reports false for a
+// provider that stores no key, so a caller cannot silently drop one.
+func (c *Config) SetKeyFor(provider, key string) bool {
+	if provider == "gemini" {
+		c.GeminiAPIKey = key
+		return true
+	}
+	if provider == "openrouter" {
+		c.OpenRouterKey = key
+		return true
+	}
+	if provider == "groq" {
+		c.GroqKey = key
+		return true
+	}
+	return false
+}
+
+// KeyEnvFor returns the environment variable a provider's key is read from,
+// honouring a per-install override.
+func (c Config) KeyEnvFor(provider string) string {
+	switch provider {
+	case "gemini":
+		return c.GeminiKeyEnv
+	case "openrouter":
+		return c.OpenRouterKeyEnv
+	case "groq":
+		return c.GroqKeyEnv
+	}
+	if s := providers.Get(provider); s != nil {
+		return s.KeyEnv
+	}
+	return ""
+}
+
 // SetupNeeded reports whether onboarding is still required for this config.
 func SetupNeeded(c Config) SetupState {
 	if c.ActiveModel == "" {
@@ -94,26 +148,18 @@ func SetupNeeded(c Config) SetupState {
 			NeedsModel: true,
 		}
 	}
-	switch c.ActiveProvider {
-	case "gemini":
-		if c.GeminiAPIKey == "" {
-			return SetupState{Reason: "Gemini API key not set", NeedsKey: true, KeyEnv: c.GeminiKeyEnv}
-		}
-	case "openrouter":
-		if c.OpenRouterKey == "" {
-			return SetupState{Reason: "OpenRouter API key not set", NeedsKey: true, KeyEnv: c.OpenRouterKeyEnv}
-		}
-	case "groq":
-		if c.GroqKey == "" {
-			return SetupState{Reason: "Groq API key not set", NeedsKey: true, KeyEnv: c.GroqKeyEnv}
-		}
-	case "ollama":
-		// Local provider needs no key; the model may still not be pulled,
-		// which the caller detects by probing the daemon.
-	default:
+	spec := providers.Get(c.ActiveProvider)
+	if spec == nil {
 		// An unrecognised provider cannot be repaired by supplying a key, so
 		// leave NeedsKey false and let the caller re-run the provider picker.
 		return SetupState{Reason: "unknown provider " + c.ActiveProvider}
+	}
+	if spec.NeedsKey && c.KeyFor(spec.ID) == "" {
+		return SetupState{
+			Reason:   spec.Label + " API key not set",
+			NeedsKey: true,
+			KeyEnv:   c.KeyEnvFor(spec.ID),
+		}
 	}
 	return SetupState{Ready: true}
 }

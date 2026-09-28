@@ -8,7 +8,7 @@ import (
 )
 
 // Regression: onboarding used to write the key the user typed into every
-// provider's field at once
+// provider's storage at once
 // (`cfg.GeminiAPIKey, cfg.OpenRouterKey, cfg.GroqKey = key, key, key`).
 // A Gemini key entered once was then sent to OpenRouter and Groq whenever a
 // turn fell back to them. A credential must only ever reach the host the user

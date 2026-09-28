@@ -258,14 +258,9 @@ func (m *Model) applyConnect(r connectResult) string {
 		}
 	} else if r.KeyEnv != "" && r.Key != "" {
 		_ = os.Setenv(r.KeyEnv, r.Key)
-		switch r.Provider {
-		case "gemini":
-			m.cfg.GeminiAPIKey = r.Key
-		case "openrouter":
-			m.cfg.OpenRouterKey = r.Key
-		case "groq":
-			m.cfg.GroqKey = r.Key
-		}
+		// Only the provider that was connected. A switch that filled every
+		// provider's key would send this secret to hosts the user never chose.
+		m.cfg.SetKeyFor(r.Provider, r.Key)
 	}
 	out := applyModel(m, r.Provider, r.Model)
 	if r.Provider == "ollama" {

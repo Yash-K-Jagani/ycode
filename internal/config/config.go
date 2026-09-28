@@ -10,14 +10,22 @@ import (
 )
 
 type Config struct {
-	OllamaHost       string `mapstructure:"ollama_host"`
-	Theme            string `mapstructure:"theme"`
-	ActiveProvider   string `mapstructure:"active_provider"`
-	ActiveModel      string `mapstructure:"active_model"`
-	ZeroDataLeak     bool   `mapstructure:"zero_data_leak"`
-	GeminiAPIKey     string `mapstructure:"-"`
-	OpenRouterKey    string `mapstructure:"-"`
-	GroqKey          string `mapstructure:"-"`
+	OllamaHost     string `mapstructure:"ollama_host"`
+	Theme          string `mapstructure:"theme"`
+	ActiveProvider string `mapstructure:"active_provider"`
+	ActiveModel    string `mapstructure:"active_model"`
+	ZeroDataLeak   bool   `mapstructure:"zero_data_leak"`
+	// Keys holds each provider's API key, keyed by provider id. It is
+	// deliberately mapstructure:"-" - a secret must never be written to
+	// config.yaml. Populated from the environment or the OS keyring at load
+	// time, and from `ycode config set` at runtime.
+	//
+	// This was three fields, one per provider, which meant a new provider
+	// needed a field, an accessor, a line in Load, and a line in every switch
+	// that touched credentials. A map needs none of them.
+	Keys map[string]string `mapstructure:"-"`
+	// The *_key_env fields are overrides for the variable a key is read
+	// from. Unlike Keys they are ordinary settings and are persisted.
 	GeminiKeyEnv     string `mapstructure:"gemini_key_env"`
 	OpenRouterKeyEnv string `mapstructure:"openrouter_key_env"`
 	GroqKeyEnv       string `mapstructure:"groq_key_env"`
@@ -29,6 +37,7 @@ func Defaults() Config {
 		Theme:            "dark",
 		ActiveProvider:   "ollama",
 		ActiveModel:      "",
+		Keys:             map[string]string{},
 		GeminiKeyEnv:     "GEMINI_API_KEY",
 		OpenRouterKeyEnv: "OPENROUTER_API_KEY",
 		GroqKeyEnv:       "GROQ_API_KEY",
@@ -51,9 +60,20 @@ func Load() (Config, error) {
 	v.AutomaticEnv()
 	_ = v.ReadInConfig()
 	_ = v.Unmarshal(&cfg)
-	cfg.GeminiAPIKey = firstNonEmpty(os.Getenv(cfg.GeminiKeyEnv), keyringGet(cfg.GeminiKeyEnv))
-	cfg.OpenRouterKey = firstNonEmpty(os.Getenv(cfg.OpenRouterKeyEnv), keyringGet(cfg.OpenRouterKeyEnv))
-	cfg.GroqKey = firstNonEmpty(os.Getenv(cfg.GroqKeyEnv), keyringGet(cfg.GroqKeyEnv))
+	// Read every key-bearing provider from the environment, then the keyring.
+	// Derived from the registry, so a new provider is picked up without a
+	// line here - which is the whole reason the keys are a map.
+	if cfg.Keys == nil {
+		cfg.Keys = map[string]string{}
+	}
+	for _, spec := range providers.All() {
+		if !spec.NeedsKey {
+			continue
+		}
+		if k := firstNonEmpty(os.Getenv(cfg.KeyEnvFor(spec.ID)), keyringGet(cfg.KeyEnvFor(spec.ID))); k != "" {
+			cfg.Keys[spec.ID] = k
+		}
+	}
 	if h := os.Getenv("OLLAMA_HOST"); h != "" {
 		cfg.OllamaHost = h
 	}
@@ -87,40 +107,33 @@ type SetupState struct {
 	KeyEnv string
 }
 
-// keyAccessors maps a provider to its stored API key. It is the only place
-// that knows which struct field holds a given provider's key, so adding a
-// provider means one row here and one in providers.specs. registry_test.go
-// asserts the two tables agree.
-var keyAccessors = map[string]func(Config) string{
-	"gemini":     func(c Config) string { return c.GeminiAPIKey },
-	"openrouter": func(c Config) string { return c.OpenRouterKey },
-	"groq":       func(c Config) string { return c.GroqKey },
-}
-
 // KeyFor returns the configured API key for a provider, or "" if it has none.
+// A Config built by hand rather than by Load has a nil map, so this must not
+// assume one exists.
 func (c Config) KeyFor(provider string) string {
-	if f, ok := keyAccessors[provider]; ok {
-		return f(c)
+	if c.Keys == nil {
+		return ""
 	}
-	return ""
+	return c.Keys[provider]
 }
 
 // SetKeyFor stores an API key against a provider. It reports false for a
-// provider that stores no key, so a caller cannot silently drop one.
+// provider that stores no key, so a caller cannot silently drop one. Setting
+// an empty value clears the key rather than storing a blank.
 func (c *Config) SetKeyFor(provider, key string) bool {
-	if provider == "gemini" {
-		c.GeminiAPIKey = key
+	spec := providers.Get(provider)
+	if spec == nil || !spec.NeedsKey {
+		return false
+	}
+	if c.Keys == nil {
+		c.Keys = map[string]string{}
+	}
+	if key == "" {
+		delete(c.Keys, provider)
 		return true
 	}
-	if provider == "openrouter" {
-		c.OpenRouterKey = key
-		return true
-	}
-	if provider == "groq" {
-		c.GroqKey = key
-		return true
-	}
-	return false
+	c.Keys[provider] = key
+	return true
 }
 
 // KeyEnvFor returns the environment variable a provider's key is read from,

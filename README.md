@@ -254,9 +254,11 @@ ycode audit [--date YYYY-MM-DD|list]  # decrypted local audit log
 ```
 
 Config keys: `active_provider`, `active_model`, `ollama_host`, `theme`,
-`zero_data_leak`, `gemini_api_key`, `openrouter_api_key`, `groq_api_key`.
-The three `*_api_key` values are written to the **OS keyring**, not to
-`config.yaml`, so `ycode config` output is safe to paste into an issue.
+`zero_data_leak`, plus one `<provider>_api_key` per key-bearing provider
+(`gemini_api_key`, `openrouter_api_key`, `groq_api_key`).
+The `*_api_key` values are written to the **OS keyring**, never to
+`config.yaml`, so `ycode config` output is safe to paste into an issue. Each
+provider's key is stored separately — setting one never populates another.
 
 API: `GET /healthz`, `GET /v1/models`, `GET /v1/status`, `POST /v1/chat`
 `{prompt, mode?, agent?, workdir?, goal_iters?}` (`mode: goal` runs the goal

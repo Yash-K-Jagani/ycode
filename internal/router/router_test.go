@@ -9,7 +9,7 @@ import (
 func TestZeroDataLeak(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.ZeroDataLeak = true
-	cfg.GeminiAPIKey = "x"
+	cfg.SetKeyFor("gemini", "x")
 	cfg.ActiveProvider = "ollama"
 	r := New(cfg)
 	if _, err := r.Provider("gemini"); err == nil {
@@ -22,7 +22,7 @@ func TestZeroDataLeak(t *testing.T) {
 		t.Fatalf("no fallbacks in ZDL: %v", fbs)
 	}
 	cfg2 := config.Defaults()
-	cfg2.GeminiAPIKey = "x"
+	cfg2.SetKeyFor("gemini", "x")
 	if fbs := New(cfg2).Fallbacks(); len(fbs) == 0 {
 		t.Fatal("expected fallbacks when not ZDL")
 	}

@@ -25,35 +25,37 @@ func TestSetupNeeded(t *testing.T) {
 		{
 			name: "gemini without a key is blocked",
 			mutate: func(c *Config) {
-				c.ActiveProvider, c.ActiveModel, c.GeminiAPIKey = "gemini", "gemini-2.0-flash", ""
+				c.ActiveProvider, c.ActiveModel = "gemini", "gemini-2.0-flash"
 			},
 			wantReady: false, wantNeedsKey: true,
 		},
 		{
 			name: "gemini with a key is ready",
 			mutate: func(c *Config) {
-				c.ActiveProvider, c.ActiveModel, c.GeminiAPIKey = "gemini", "gemini-2.0-flash", "k"
+				c.ActiveProvider, c.ActiveModel = "gemini", "gemini-2.0-flash"
+				c.SetKeyFor("gemini", "k")
 			},
 			wantReady: true,
 		},
 		{
 			name: "openrouter without a key is blocked",
 			mutate: func(c *Config) {
-				c.ActiveProvider, c.ActiveModel, c.OpenRouterKey = "openrouter", "some/model", ""
+				c.ActiveProvider, c.ActiveModel = "openrouter", "some/model"
 			},
 			wantReady: false, wantNeedsKey: true,
 		},
 		{
 			name: "groq with a key is ready",
 			mutate: func(c *Config) {
-				c.ActiveProvider, c.ActiveModel, c.GroqKey = "groq", "llama-3.3-70b", "k"
+				c.ActiveProvider, c.ActiveModel = "groq", "llama-3.3-70b"
+				c.SetKeyFor("groq", "k")
 			},
 			wantReady: true,
 		},
 		{
 			name: "model check wins over key check",
 			mutate: func(c *Config) {
-				c.ActiveProvider, c.ActiveModel, c.GeminiAPIKey = "gemini", "", ""
+				c.ActiveProvider, c.ActiveModel = "gemini", ""
 			},
 			wantReady: false, wantNeedsModel: true,
 		},

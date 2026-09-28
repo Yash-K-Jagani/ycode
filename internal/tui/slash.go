@@ -161,7 +161,7 @@ func (m *Model) setMode(md modes.Mode) string {
 }
 
 func slashRegistry() map[string]slashHandler {
-	return map[string]slashHandler{
+	reg := map[string]slashHandler{
 		"/help": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			// Modes and the Tab cycle come from the registry, so this line
 			// cannot fall out of step with it.
@@ -375,7 +375,9 @@ func slashRegistry() map[string]slashHandler {
 			m.conn = newConnect()
 			return "", textinput.Blink
 		},
-		"/plan": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Plan), nil },
+		// /goal is listed here because it does more than switch mode: it
+		// accepts a goal and starts working it. The other mode switches are
+		// generated from the registry below.
 		"/goal": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			spec := strings.TrimSpace(args)
 			if spec == "" {
@@ -385,11 +387,6 @@ func slashRegistry() map[string]slashHandler {
 				return out, nil
 			}
 			return "", m.startTurn(spec, turnOpts{})
-		},
-		"/build": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Build), nil },
-		"/chat":  func(ctx context.Context, m *Model, args string) (string, tea.Cmd) { return m.setMode(modes.Chat), nil },
-		"/thinking": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
-			return m.setMode(modes.Thinking), nil
 		},
 		"/agent": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			if args == "" {
@@ -853,6 +850,19 @@ func slashRegistry() map[string]slashHandler {
 			return "Theme: " + arg, nil
 		},
 	}
+	// Mode switches are generated from the registry, so a new mode is
+	// selectable without a handler here. /goal is skipped: it is defined
+	// above because it also starts a run.
+	for _, md := range modes.All() {
+		if md == modes.Goal {
+			continue
+		}
+		mode := md
+		reg[modes.Slash(mode)] = func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			return m.setMode(mode), nil
+		}
+	}
+	return reg
 }
 
 func doctorFix(m *Model) string {

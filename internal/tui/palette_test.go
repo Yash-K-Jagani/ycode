@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -48,6 +49,39 @@ func TestPaletteListsEveryMode(t *testing.T) {
 func knownCommand(name string) bool {
 	_, ok := slashRegistry()[name]
 	return ok
+}
+
+// Every registered mode must be selectable by its slash command. The handlers
+// are generated from the registry, so this is really a check that generation
+// did not skip or overwrite one.
+func TestEveryModeIsSelectable(t *testing.T) {
+	reg := slashRegistry()
+	for _, md := range modes.All() {
+		name := modes.Slash(md)
+		h, ok := reg[name]
+		if !ok {
+			t.Fatalf("mode %s has no handler for %q", md, name)
+		}
+		m := &Model{mode: modes.Chat}
+		out, cmd := h(context.Background(), m, "")
+		if cmd != nil {
+			t.Fatalf("%s started work for a bare switch", name)
+		}
+		if md == modes.Goal {
+			// /goal does more than switch mode, so a bare one explains itself
+			// rather than starting a run.
+			if !strings.Contains(out, "Usage") {
+				t.Fatalf("bare /goal should reply with usage, got %q", out)
+			}
+			continue
+		}
+		if out != "" {
+			t.Fatalf("%s returned output for a bare switch: %q", name, out)
+		}
+		if m.mode != md {
+			t.Fatalf("%s did not switch mode (still %s)", name, m.mode)
+		}
+	}
 }
 
 func TestFilterSlash(t *testing.T) {

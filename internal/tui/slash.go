@@ -23,6 +23,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/mcp"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/prompts"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/ollama"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/registry"
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
@@ -82,16 +83,15 @@ func applyModel(m *Model, provider, model string) string {
 	return fmt.Sprintf("Switched to %s / %s%s", provider, model, warn)
 }
 
+// hasKey reports whether a provider is usable, so /connect can skip the ones
+// that need a credential the user has not supplied. Local and unknown
+// providers need no key.
 func hasKey(m *Model, provider string) bool {
-	switch provider {
-	case "gemini":
-		return m.cfg.GeminiAPIKey != ""
-	case "openrouter":
-		return m.cfg.OpenRouterKey != ""
-	case "groq":
-		return m.cfg.GroqKey != ""
+	spec := providers.Get(provider)
+	if spec == nil || !spec.NeedsKey {
+		return true
 	}
-	return true
+	return m.cfg.KeyFor(provider) != ""
 }
 
 func modelsHelp(m *Model, entries []modelEntry, note string) string {

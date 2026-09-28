@@ -124,6 +124,51 @@ type modelsModal struct {
 	note     string
 }
 
+// The three pickers differ only in what they list and what committing an entry
+// does; moving the selection, filtering and clamping were three copies of the
+// same code. These two helpers are that logic, once.
+
+// moveSel moves a selection by delta within a list of n items, staying put at
+// the ends rather than wrapping: a picker that wraps makes it easy to commit
+// the wrong model by holding down a key.
+func moveSel(sel, delta, n int) int {
+	if delta < 0 && sel > 0 {
+		return sel - 1
+	}
+	if delta > 0 && sel < n-1 {
+		return sel + 1
+	}
+	return sel
+}
+
+// clampSel brings a selection back into range after the filtered list changed
+// underneath it. An empty list yields 0, so Enter is a no-op rather than a
+// panic on filtered[0].
+func clampSel(sel, n int) int {
+	if sel >= n {
+		sel = n - 1
+	}
+	if sel < 0 {
+		sel = 0
+	}
+	return sel
+}
+
+// pickKey applies an arrow key to a picker's selection, reporting whether the
+// key was one it handles.
+func pickKey(sel *int, filtered int, msg tea.Msg) {
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return
+	}
+	switch k.String() {
+	case "up":
+		*sel = moveSel(*sel, -1, filtered)
+	case "down":
+		*sel = moveSel(*sel, 1, filtered)
+	}
+}
+
 func newModelsModal(entries []modelEntry, note string) *modelsModal {
 	ti := textinput.New()
 	ti.Placeholder = "filter models…"
@@ -134,19 +179,7 @@ func newModelsModal(entries []modelEntry, note string) *modelsModal {
 }
 
 func (m *modelsModal) update(msg tea.Msg) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up":
-			if m.sel > 0 {
-				m.sel--
-			}
-		case "down":
-			if m.sel < len(m.filtered)-1 {
-				m.sel++
-			}
-		}
-	}
+	pickKey(&m.sel, len(m.filtered), msg)
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	_ = cmd
@@ -165,13 +198,8 @@ func (m *modelsModal) update(msg tea.Msg) {
 			out = append(out, m.entries[ma.Index])
 		}
 		m.filtered = out
-		if m.sel >= len(m.filtered) {
-			m.sel = len(m.filtered) - 1
-		}
-		if m.sel < 0 {
-			m.sel = 0
-		}
 	}
+	m.sel = clampSel(m.sel, len(m.filtered))
 }
 
 func (m *modelsModal) view(width int, accent lipgloss.Color) string {
@@ -239,19 +267,7 @@ func newSessionsModal(entries []sessions.Session) *sessionsModal {
 }
 
 func (m *sessionsModal) update(msg tea.Msg) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up":
-			if m.sel > 0 {
-				m.sel--
-			}
-		case "down":
-			if m.sel < len(m.filtered)-1 {
-				m.sel++
-			}
-		}
-	}
+	pickKey(&m.sel, len(m.filtered), msg)
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	_ = cmd
@@ -269,13 +285,8 @@ func (m *sessionsModal) update(msg tea.Msg) {
 			out = append(out, m.entries[ma.Index])
 		}
 		m.filtered = out
-		if m.sel >= len(m.filtered) {
-			m.sel = len(m.filtered) - 1
-		}
-		if m.sel < 0 {
-			m.sel = 0
-		}
 	}
+	m.sel = clampSel(m.sel, len(m.filtered))
 }
 
 func (m *sessionsModal) view(width int, accent lipgloss.Color) string {
@@ -336,19 +347,7 @@ func newStoreModal(entries []store.Entry) *storeModal {
 }
 
 func (m *storeModal) update(msg tea.Msg) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "up":
-			if m.sel > 0 {
-				m.sel--
-			}
-		case "down":
-			if m.sel < len(m.filtered)-1 {
-				m.sel++
-			}
-		}
-	}
+	pickKey(&m.sel, len(m.filtered), msg)
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	_ = cmd
@@ -366,13 +365,8 @@ func (m *storeModal) update(msg tea.Msg) {
 			out = append(out, m.entries[ma.Index])
 		}
 		m.filtered = out
-		if m.sel >= len(m.filtered) {
-			m.sel = len(m.filtered) - 1
-		}
-		if m.sel < 0 {
-			m.sel = 0
-		}
 	}
+	m.sel = clampSel(m.sel, len(m.filtered))
 }
 
 func (m *storeModal) view(width int, accent lipgloss.Color) string {

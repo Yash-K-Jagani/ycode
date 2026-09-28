@@ -500,17 +500,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.stream.Reset()
-		m.appendSys("error: " + msg.err.Error())
+		// Resolved once, because three separate uses of msg.err.Error() is
+		// three chances to dereference a nil - and a panic inside Update kills
+		// the session rather than showing a wrong thing. Every current sender
+		// only builds this with a non-nil error, but the handler does not
+		// depend on that.
+		text := "the turn failed for an unknown reason"
+		if msg.err != nil {
+			text = msg.err.Error()
+		}
+		m.appendSys("error: " + text)
 		// A failed turn ends the run: continuing on the same error would
 		// burn the iteration budget silently.
 		if m.goal != nil && m.goal.Status == goal.Active {
 			m.goal.Status = goal.Blocked
 			m.noteGoalStop()
 		}
-		if out := m.hookset.Fire(context.Background(), hooks.OnError, map[string]string{"error": msg.err.Error()}); out != "" {
+		if out := m.hookset.Fire(context.Background(), hooks.OnError, map[string]string{"error": text}); out != "" {
 			m.appendSys(out)
 		}
-		webhooks.Fire("turn_error", map[string]any{"error": msg.err.Error()})
+		webhooks.Fire("turn_error", map[string]any{"error": text})
 		return m, nil
 	case reviewPostDone:
 		m.busy = false

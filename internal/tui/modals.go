@@ -13,6 +13,107 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/store"
 )
 
+// updateOverlay routes input to whichever modal or form is open, and reports
+// whether one was. All of them are centered fuzzy pickers with the same
+// shape: filter as you type, Esc dismisses, Enter commits the selection, and
+// every other key goes to the picker's own update.
+//
+// This used to be three copies of that switch inlined at the top of Update,
+// plus a fourth block for the connect form. They drifted: the sessions picker
+// was the only one that reset the active goal, and the store picker was the
+// only one that could return a command. Keeping the commit behaviour in one
+// function per modal makes that difference explicit instead of positional.
+func (m *Model) updateOverlay(msg tea.Msg) (tea.Model, tea.Cmd, bool) {
+	switch {
+	case m.modelsModal != nil:
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.modelsModal = nil
+			case "enter":
+				if len(m.modelsModal.filtered) > 0 {
+					e := m.modelsModal.filtered[m.modelsModal.sel]
+					m.appendSys(applyModel(m, e.Provider, e.Model))
+				}
+				m.modelsModal = nil
+			}
+			return m, nil, true
+		}
+		m.modelsModal.update(msg)
+		return m, nil, true
+
+	case m.sessionsModal != nil:
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.sessionsModal = nil
+			case "enter":
+				if len(m.sessionsModal.filtered) > 0 {
+					s := m.sessionsModal.filtered[m.sessionsModal.sel]
+					m.resumeSession(s)
+				}
+				m.sessionsModal = nil
+			}
+			return m, nil, true
+		}
+		m.sessionsModal.update(msg)
+		return m, nil, true
+
+	case m.storeModal != nil:
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "esc":
+				m.storeModal = nil
+			case "enter":
+				if len(m.storeModal.filtered) > 0 {
+					e := m.storeModal.filtered[m.storeModal.sel]
+					m.appendSys(fmt.Sprintf("Installing %s (%s) …", e.Name, e.Kind))
+					cmd := m.storeInstallCmd(e)
+					m.storeModal = nil
+					return m, cmd, true
+				}
+				m.storeModal = nil
+			}
+			return m, nil, true
+		}
+		m.storeModal.update(msg)
+		return m, nil, true
+
+	case m.conn != nil:
+		if _, ok := msg.(tea.KeyMsg); ok {
+			cmd := m.updateConnect(msg)
+			if m.conn != nil && m.conn.done {
+				res := m.conn.result
+				m.conn = nil
+				m.appendSys(m.applyConnect(res))
+			}
+			return m, cmd, true
+		}
+		if _, ok := msg.(fetchModelsMsg); ok {
+			return m, m.updateConnect(msg), true
+		}
+	}
+	return m, nil, false
+}
+
+// resumeSession adopts a session from the picker. The previous session's goal
+// is dropped: its steps described work in that transcript, and carrying them
+// into a new session would let goal mode report progress it never made.
+func (m *Model) resumeSession(s sessions.Session) {
+	m.sess = &s
+	if s.Provider != "" {
+		m.cfg.ActiveProvider = s.Provider
+	}
+	if s.Model != "" {
+		m.cfg.ActiveModel = s.Model
+	}
+	m.router.Update(m.cfg)
+	_ = m.cfg.Save()
+	m.renderAll()
+	m.goal = nil
+	m.appendSys("Resumed " + s.Title + " (/goal <text> to start a new goal)")
+}
+
 // ---------- Models modal ----------
 
 type modelsModal struct {

@@ -16,7 +16,14 @@ func TestHelperSilentServer(t *testing.T) {
 	if os.Getenv("YCODE_MCP_SILENT") != "1" {
 		t.Skip("helper process")
 	}
-	select {} // accept the request and never reply
+	// Not `select {}`. With every goroutine blocked, the Go runtime detects a
+	// deadlock and exits the process, which closes stdout - and the test then
+	// sees "server closed stream" instead of the timeout it is trying to
+	// provoke. Sleeping is indistinguishable from blocked for the runtime's
+	// purposes but is not a deadlock, so the child stays alive to be killed.
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func startSilentServer(t *testing.T) *Client {

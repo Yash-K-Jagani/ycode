@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -279,15 +280,46 @@ func (m *Model) applyConnect(r connectResult) string {
 	}
 	extra := "key " + maskKey(r.Key) + " active for this session"
 	if r.SaveKey {
-		if err := keys.Set(r.KeyEnv, r.Key); err != nil {
-			extra += " - keyring save failed (" + err.Error() + "), persist with: export " + r.KeyEnv + "=..."
-		} else {
+		// Bounded, because this runs on the UI thread. The keyring is an
+		// external program: on macOS it is `security`, which blocks on an
+		// interactive keychain prompt. Without a bound, a user who answers
+		// "save" and then walks away gets a TUI that never draws again - and a
+		// test runner, which can never answer the prompt at all, simply
+		// hangs until the suite times out.
+		//
+		// The session key is already set above, so a timeout here loses
+		// nothing that was not already applied; the user just has to persist
+		// it themselves, and the message says so.
+		switch err := saveToKeyring(r.KeyEnv, r.Key); {
+		case err == nil:
 			extra += " - saved to OS keyring"
+		case errors.Is(err, errKeyringTimeout):
+			extra += " - keyring did not respond, persist with: export " + r.KeyEnv + "=..."
+		default:
+			extra += " - keyring save failed (" + err.Error() + "), persist with: export " + r.KeyEnv + "=..."
 		}
 	} else {
 		extra += " - persist with: export " + r.KeyEnv + "=..."
 	}
 	return out + " (" + extra + ")"
+}
+
+// keyringTimeout bounds a keyring write, and errKeyringTimeout reports that it
+// was the bound rather than the keyring that gave up.
+const keyringTimeout = 5 * time.Second
+
+var errKeyringTimeout = errors.New("keyring did not respond")
+
+// saveToKeyring writes the secret, giving up after keyringTimeout.
+func saveToKeyring(account, secret string) error {
+	done := make(chan error, 1)
+	go func() { done <- keys.Set(account, secret) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(keyringTimeout):
+		return errKeyringTimeout
+	}
 }
 
 func (c *connectFlow) view(width int, accent lipgloss.Color) string {

@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Yash-K-Jagani/ycode/internal/keys"
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/providers/openaicompat"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
@@ -127,6 +128,13 @@ func TestConnectFlowReachesEveryStep(t *testing.T) {
 	}
 
 	// Answering the question finishes the flow.
+	//
+	// The keyring is stubbed. The real one is an external program - on macOS
+	// `security` - which blocks on an interactive keychain prompt. A test that
+	// reached it hung for the full ten-minute suite timeout, and on a
+	// developer's machine it pops a dialog.
+	stubKeyring(t, nil)
+
 	c.keyInput.SetValue("y")
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if !c.done {
@@ -135,6 +143,27 @@ func TestConnectFlowReachesEveryStep(t *testing.T) {
 	if !c.result.SaveKey {
 		t.Fatal("answering y did not request a keyring save")
 	}
+}
+
+// stubKeyring replaces the OS keyring for the duration of a test, so nothing
+// can reach Credential Manager, Keychain or Secret Service. Passing a non-nil
+// err makes the write fail.
+func stubKeyring(t *testing.T, err error) {
+	t.Helper()
+	var wrote []string
+	restore := keys.SetForTest(func(service, user, password string) error {
+		wrote = append(wrote, user)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	t.Cleanup(restore)
+	t.Cleanup(func() {
+		for _, w := range wrote {
+			_ = keys.Delete(w)
+		}
+	})
 }
 
 // The flow can be walked backwards, and a key typed on the way must not survive

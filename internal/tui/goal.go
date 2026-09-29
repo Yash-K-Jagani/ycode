@@ -66,8 +66,37 @@ func (m *Model) advanceGoal(msg doneMsg) tea.Cmd {
 		m.appendSys("goal run stopped: left goal mode. " + g.Summary())
 		return nil
 	}
+	// The second half of the budget stop, and the one that matters. startTurn
+	// already refuses to begin a turn over the limit, which would end the run a
+	// step late and without saying why; checking here, at the iteration
+	// boundary, stops it where the person watching can see it happen.
+	//
+	// Cost is added before advanceGoal is called, so this sees the spend that
+	// caused the crossing.
+	if m.budgetExceeded() {
+		g.Status = goal.Cancelled
+		m.appendSys("goal run stopped: " + m.budget.BlockedMessage() + " " + g.Summary())
+		m.goalStop()
+		return nil
+	}
 	m.appendSys(fmt.Sprintf("↳ goal iteration %d/%d — continuing unattended (Esc to stop)", g.Iter+1, g.MaxIter))
 	return m.startTurn(g.Text, turnOpts{auto: true, nudge: g.Continuation()})
+}
+
+// budgetExceeded reports whether the daily limit has been reached, telling the
+// user once per crossing rather than on every turn thereafter.
+func (m *Model) budgetExceeded() bool {
+	if m.budget.Unlimited() || !m.budget.Exceeded() {
+		return false
+	}
+	// Suppress a repeat: once the run has been told, every later turn saying
+	// the same thing makes the limit look like a fault rather than a decision.
+	if m.budgetWarned {
+		return true
+	}
+	m.budgetWarned = true
+	m.appendSys("blocked: " + m.budget.BlockedMessage())
+	return true
 }
 
 // stopGoalRun marks an interrupted run as cancelled.

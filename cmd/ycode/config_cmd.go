@@ -108,6 +108,7 @@ func configPairs(c config.Config) [][2]string {
 		{"ollama_host", c.OllamaHost},
 		{"theme", c.Theme},
 		{"zero_data_leak", strconv.FormatBool(c.ZeroDataLeak)},
+		{"daily_budget_usd", strconv.FormatFloat(c.DailyBudgetUSD, 'f', -1, 64)},
 	}
 	// One row per key-bearing provider, so `ycode config list` and the
 	// keyring routing cannot fall behind the registry.
@@ -196,6 +197,20 @@ func applyConfigValue(c *config.Config, key, val string) bool {
 			return true // recognised, just invalid; do not claim "unknown key"
 		}
 		c.ZeroDataLeak = b
+	case "daily_budget_usd":
+		// Parsed as a float and validated here rather than at the point of
+		// enforcement, so a typo is a message at the moment it was typed
+		// instead of a limit that silently never fires.
+		v, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "daily_budget_usd expects a number of dollars, got %q\n", val)
+			return true
+		}
+		if v < 0 {
+			fmt.Fprintf(os.Stderr, "daily_budget_usd cannot be negative, got %v (use 0 for no limit)\n", v)
+			return true
+		}
+		c.DailyBudgetUSD = v
 	default:
 		return false
 	}

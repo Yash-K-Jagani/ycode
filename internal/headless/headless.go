@@ -2,6 +2,7 @@ package headless
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/audit"
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	yctx "github.com/Yash-K-Jagani/ycode/internal/context"
+	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/goal"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
@@ -139,6 +141,19 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	o.withDefaults()
 	ctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
+	// The daily budget is shared across entry points. The tracker is persisted,
+	// so a headless run started after a long TUI session is held to the same
+	// ceiling, and an unattended `ycode ops` cannot be used to spend past a
+	// limit the user set.
+	//
+	// What this does not yet do is meter headless's own usage: the router does
+	// not surface per-turn token counts, so a session that only ever runs
+	// headless records nothing and this check always passes. Guarding against
+	// the spend that is recorded beats not guarding, but the honest description
+	// is a ceiling on recorded spend, not on headless spend.
+	if b := cost.NewBudget(cost.New(), cfg.DailyBudgetUSD); b.Exceeded() {
+		return "", errors.New(b.BlockedMessage())
+	}
 	if cfg.ZeroDataLeak {
 		ctx = tools.WithZeroLeak(ctx)
 	}

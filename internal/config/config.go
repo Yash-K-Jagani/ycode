@@ -15,6 +15,11 @@ type Config struct {
 	ActiveProvider string `mapstructure:"active_provider"`
 	ActiveModel    string `mapstructure:"active_model"`
 	ZeroDataLeak   bool   `mapstructure:"zero_data_leak"`
+	// DailyBudgetUSD is a hard ceiling on what a day's metered turns may cost.
+	// Zero means unlimited, which is the default and the only sensible value
+	// for a local provider. plan.md promised "budget limits with hard stops"
+	// from the start and nothing enforced it until now.
+	DailyBudgetUSD float64 `mapstructure:"daily_budget_usd"`
 	// Keys holds each provider's API key, keyed by provider id. It is
 	// deliberately mapstructure:"-" - a secret must never be written to
 	// config.yaml. Populated from the environment or the OS keyring at load
@@ -197,6 +202,7 @@ func (c Config) Save() error {
 	v.Set("active_provider", c.ActiveProvider)
 	v.Set("active_model", c.ActiveModel)
 	v.Set("zero_data_leak", c.ZeroDataLeak)
+	v.Set("daily_budget_usd", c.DailyBudgetUSD)
 	v.Set("gemini_key_env", c.GeminiKeyEnv)
 	v.Set("openrouter_key_env", c.OpenRouterKeyEnv)
 	v.Set("groq_key_env", c.GroqKeyEnv)

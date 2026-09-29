@@ -62,6 +62,16 @@ func (m *Model) submit() tea.Cmd {
 // startTurn appends the user message, builds the system prompt and runs the
 // provider turn (streaming with or without the tool loop).
 func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
+	// The hard stop. A turn that would begin over the daily budget does not
+	// begin, and says why with the number attached.
+	//
+	// It is checked here rather than after the model call because the cost of a
+	// turn is not known until it has been paid for, and a check afterwards is
+	// a report rather than a limit. plan.md called for hard stops; a soft
+	// warning that then spends anyway is the worst of both.
+	if m.budgetExceeded() {
+		return nil
+	}
 	if !o.auto {
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
 	}

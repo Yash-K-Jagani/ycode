@@ -254,7 +254,8 @@ ycode audit [--date YYYY-MM-DD|list]  # decrypted local audit log
 ```
 
 Config keys: `active_provider`, `active_model`, `ollama_host`, `theme`,
-`zero_data_leak`, plus one `<provider>_api_key` per key-bearing provider
+`zero_data_leak`, `daily_budget_usd`, plus one `<provider>_api_key` per
+key-bearing provider
 (`gemini_api_key`, `openrouter_api_key`, `groq_api_key`).
 The `*_api_key` values are written to the **OS keyring**, never to
 `config.yaml`, so `ycode config` output is safe to paste into an issue. Each
@@ -349,6 +350,14 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
   `browser`, `github`, `git`, `db`, `notebook`, `scaffold`, `vscode`, all
   `mcp__*`/`plugin__*`), red `[LOCAL ONLY]` badge. A guardrail, not a sandbox:
   `bash`/`run` still execute arbitrary commands. See `docs/security.md`.
+- **`daily_budget_usd: 1.50`** (default `0`, meaning no limit): a hard ceiling on
+  a day's metered spend. A turn that would begin over the line does not begin,
+  and an unattended goal run stops at the next iteration rather than mid-token.
+  Set it in-session with `/budget 1.50`, watch it in the sidebar, read it with
+  `/budget`. There is no soft mode on purpose — a warning that then spends anyway
+  is the worst of both. Local models cost nothing, so a limit only matters for
+  cloud providers. Currently a ceiling on *recorded* spend: headless turns are
+  not metered, so a session that only runs `ycode -p` will not accumulate.
 - Full model: `docs/security.md`.
 
 ---
@@ -364,6 +373,7 @@ theme: dark
 active_provider: ollama
 active_model: ""
 zero_data_leak: false
+daily_budget_usd: 0
 gemini_key_env: GEMINI_API_KEY
 openrouter_key_env: OPENROUTER_API_KEY
 groq_key_env: GROQ_API_KEY

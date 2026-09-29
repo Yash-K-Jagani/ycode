@@ -64,6 +64,15 @@ type Model struct {
 	// hist is the submitted-prompt history for the input box. See input.go.
 	hist inputHistory
 
+	// budget is the daily spend ceiling. Nil is not a thing: New always sets
+	// one, and Unlimited() is the answer when no limit is configured, so
+	// callers never have to check for nil before asking.
+	budget *cost.Budget
+
+	// budgetWarned records that the limit has already been reported, so the
+	// message is given once at the crossing rather than on every turn after it.
+	budgetWarned bool
+
 	// side holds the sidebar's disk-backed values. The sidebar is rendered on
 	// every message, and bubbletea sends one per streamed token, so reading the
 	// todo file and the batch queue there meant two file/SQLite reads per
@@ -233,12 +242,17 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(th.Accent)
 	vp := newViewport(80, 20)
+	// One tracker, shared with the budget. Two would each keep their own
+	// in-memory day totals and disagree with each other, and the budget would
+	// then be enforcing against a number nothing else was recording.
+	tracker := cost.New()
 	m := Model{
 		cfg: cfg, router: r, sess: sess, ta: ta, vp: vp,
 		keys: DefaultKeyMap(), th: th,
 		mode: modes.Chat, agent: ag,
 		toolreg: tools.DefaultRegistry(workdir),
-		workdir: workdir, tracker: cost.New(),
+		workdir: workdir, tracker: tracker,
+		budget: cost.NewBudget(tracker, cfg.DailyBudgetUSD),
 		mcpMgr: mcp.NewManager(), hookset: hooks.Load(),
 		skillMgr: skills.NewManager(),
 		embedder: em, semCache: cache.New(em.Embed),

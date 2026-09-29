@@ -117,6 +117,25 @@ func (m *Model) sidebar(height int) string {
 		spend = fmt.Sprintf("free local · $%.4f today (cloud)", today)
 	}
 	fmt.Fprintf(&b, "%s\n", val.Render(spend))
+	// The budget is shown next to the spend, not on its own, because the two
+	// are only meaningful together - a limit with no number next to it is not
+	// something a person can watch. It appears only when one is set, since an
+	// unlimited meter on a local model is a row of noise.
+	if !m.budget.Unlimited() {
+		used := m.budget.Fraction()
+		// Red as the limit approaches, and once it is reached the row says so,
+		// because a bar at 100% that looks the same as one at 95% is not
+		// telling the user anything they can act on.
+		line := fmt.Sprintf("budget $%.2f/$%.2f (%.0f%%)", today, m.budget.Limit(), used*100)
+		style := val
+		if m.budget.Exceeded() {
+			style = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#ff5555"))
+			line = fmt.Sprintf("budget REACHED $%.2f", today)
+		} else if used > 0.8 {
+			style = lipgloss.NewStyle().Foreground(lipgloss.Color("#e8c86a"))
+		}
+		fmt.Fprintf(&b, "%s\n", style.Render(line))
+	}
 	sec("goal")
 	if m.goal == nil {
 		b.WriteString(dim.Render("no goal — /goal <text>") + "\n")

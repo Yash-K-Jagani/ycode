@@ -19,6 +19,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/agent"
 	"github.com/Yash-K-Jagani/ycode/internal/agents"
 	"github.com/Yash-K-Jagani/ycode/internal/batch"
+	"github.com/Yash-K-Jagani/ycode/internal/cost"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/mcp"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
@@ -357,6 +358,42 @@ func slashRegistry() map[string]slashHandler {
 				return modelsHelp(m, entries, note), nil
 			}
 			return selectModel(m, entries, args), nil
+		},
+		"/budget": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			// Plan.md promised budget limits and hard stops from the start.
+			// Without a way to look at the limit, a stop is just an error
+			// message, so the setting is readable and settable from here.
+			if rest := strings.TrimSpace(args); rest != "" {
+				v, err := strconv.ParseFloat(rest, 64)
+				if err != nil || v < 0 {
+					return fmt.Sprintf("usage: /budget [<usd>]\n  /budget          show the limit and today's spend\n  /budget 1.50     stop once a day costs $1.50\n  /budget 0        no limit (default; local models are free)\n\n  got %q", rest), nil
+				}
+				m.cfg.DailyBudgetUSD = v
+				m.budget = cost.NewBudget(m.tracker, v)
+				if err := m.cfg.Save(); err != nil {
+					return "budget saved but config write failed: " + err.Error(), nil
+				}
+				// Clear the latch so a lowered limit is reported, and a
+				// raised one lets work resume without a restart.
+				m.budgetWarned = false
+				if m.budget.Unlimited() {
+					return "daily budget: no limit", nil
+				}
+				return fmt.Sprintf("daily budget set to $%.4f", v), nil
+			}
+			p, c, usd := m.tracker.Today()
+			if m.budget.Unlimited() {
+				return fmt.Sprintf(
+					"no daily budget set (unlimited).\n  today: %d prompt + %d completion tokens, $%.4f\n"+
+						"  set one with /budget <usd>, e.g. /budget 1.00\n"+
+						"  local models cost nothing, so a limit only matters for cloud providers.",
+					p, c, usd), nil
+			}
+			return fmt.Sprintf(
+				"daily budget $%.4f, $%.4f spent (%.0f%%), $%.4f left\n  today: %d prompt + %d completion tokens\n%s",
+				m.budget.Limit(), usd, m.budget.Fraction()*100, m.budget.Remaining(), p, c,
+				map[bool]string{true: "  status: reached — turns are being refused", false: ""}[m.budget.Exceeded()],
+			), nil
 		},
 		"/status": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			toks := sessions.EstimateTokens(m.sess.Messages)

@@ -8,3 +8,13 @@ coverage.out
 # PowerShell drops a module analysis cache in whatever directory a background
 # job starts in, which can be the repository root. It is not ours.
 /Microsoft/
+
+# Local SQLite databases. The user-facing one lives in ~/.ycode, so a .db in
+# the tree is always a test or probe artifact. t_probe.db was committed by
+# exactly that mistake: a probe test that wrote to the working directory
+# instead of t.TempDir(), and the file outlived the test that made it.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3

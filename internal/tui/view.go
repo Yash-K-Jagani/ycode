@@ -50,6 +50,13 @@ func (m Model) View() string {
 	if m.sideOn && m.winW > sideWidth+40 {
 		chat = lipgloss.JoinHorizontal(lipgloss.Top, chat, m.sidebar(m.vp.Height))
 	}
+	// The affordance that makes stopping the auto-scroll honest: without it, a
+	// reader who scrolled away has no way to know the answer kept arriving, or
+	// how much of it they have not seen. It says nothing while they are
+	// following, so it never covers the output they are reading.
+	if pill := m.jumpPill(); pill != "" {
+		chat = lipgloss.PlaceHorizontal(m.vp.Width, lipgloss.Right, pill)
+	}
 	out := chat + "\n"
 	if pal := m.paletteItems(); len(pal) > 0 {
 		out += renderPalette(pal, m.palIdx, m.vp.Width, m.th.Accent) + "\n"

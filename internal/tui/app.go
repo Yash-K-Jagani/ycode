@@ -56,6 +56,11 @@ type Model struct {
 	joined joinedTranscript
 	sr     streamRender
 
+	// unseen is how many lines have arrived below the reader since they last
+	// looked. Zero while they are following the output; shown as a jump-to-
+	// latest affordance when they are not.
+	unseen int
+
 	// side holds the sidebar's disk-backed values. The sidebar is rendered on
 	// every message, and bubbletea sends one per streamed token, so reading the
 	// todo file and the batch queue there meant two file/SQLite reads per
@@ -194,13 +199,33 @@ func (w progWriter) Write(p []byte) (int, error) { w.send(string(p)); return len
 
 var _ io.Writer = progWriter{}
 
+// newViewport is the transcript viewport, with its keymap cleared.
+//
+// The default keymap is a pager's: space pages down, b pages up, and
+// u/d/j/k/h/l scroll by half-page and by line. The update loop handed every key
+// to the viewport as well as to the input box, so all of those were live while
+// typing - every space in a prompt paged the transcript, and typing one
+// sentence scrolled it 91 lines.
+//
+// In a chat client the input box has the keyboard. The transcript is scrolled
+// by keys that cannot occur in text, handled by Model.scrollKey: PageUp and
+// PageDown, alt-arrow and ctrl-arrow, and End to snap back to the bottom.
+//
+// This is a constructor rather than a line inside New so that a test building a
+// Model by hand gets the same viewport as production. A helper that quietly
+// diverges from the real thing is how a bug like this comes back.
+func newViewport(w, h int) viewport.Model {
+	vp := viewport.New(w, h)
+	vp.KeyMap = viewport.KeyMap{}
+	return vp
+}
+
 func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask anything…  (/help, Tab modes, @file to attach)"
 	ta.Focus()
 	ta.CharLimit = 8000
 	ta.SetHeight(3)
-	vp := viewport.New(80, 20)
 	th := theme.For(cfg.Theme)
 	ApplyTheme(th)
 	ag, _ := agents.Get("builder")
@@ -208,6 +233,7 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(th.Accent)
+	vp := newViewport(80, 20)
 	m := Model{
 		cfg: cfg, router: r, sess: sess, ta: ta, vp: vp,
 		keys: DefaultKeyMap(), th: th,
@@ -692,6 +718,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.atIdx = 0
 			}
 		}
+		if m.scrollKey(msg) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "ctrl+d":
 			m.Shutdown()
@@ -804,7 +833,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.ta, cmd = m.ta.Update(msg)
-	m.vp, _ = m.vp.Update(msg)
 	cmds := []tea.Cmd{cmd}
 	if m.conn != nil && m.conn.step == cStepKey {
 		var c2 tea.Cmd

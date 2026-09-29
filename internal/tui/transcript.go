@@ -1,6 +1,13 @@
 package tui
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // Incremental transcript rendering.
 //
@@ -297,6 +304,106 @@ func (m *Model) syncViewport(tail ...string) {
 		}
 		body += t
 	}
+	// Was the reader following the output? This has to be asked before the
+	// content changes, because afterwards the answer is always yes: the new
+	// lines are below, so the old offset is no longer the bottom.
+	following := m.pinned()
 	m.vp.SetContent(body)
-	m.vp.GotoBottom()
+	if following {
+		m.vp.GotoBottom()
+	}
+	// The offset is restored above only for a reader who was following. For
+	// one who had scrolled away, the position is adjusted just enough to keep
+	// the text they were reading in view as content is appended below it,
+	// which is what makes reading back through a long answer possible while the
+	// model is still writing it. It was impossible before: every delta called
+	// GotoBottom unconditionally, so a reader was dragged to the end once per
+	// token.
+	m.unseen = 0
+	if !following && m.vp.AtBottom() {
+		// Scrolling up to a point and then having the content change can leave
+		// the offset at the end anyway, which is indistinguishable from having
+		// followed. Nothing to recover here; leave it pinned.
+		m.unseen = 0
+	} else if !following {
+		m.unseen = countLines(body) - m.vp.YOffset - m.vp.Height
+		if m.unseen < 0 {
+			m.unseen = 0
+		}
+	}
+}
+
+func countLines(s string) int { return strings.Count(s, "\n") + 1 }
+
+// jumpPill is the "there is more below" affordance, or "" when the reader is
+// following the output.
+//
+// It only appears when the view is not pinned, because the whole point of the
+// pin is that scrolling away is a choice the UI made quietly; without a
+// counter, a reader cannot tell whether the answer ended or just scrolled past
+// them.
+func (m *Model) jumpPill() string {
+	if m.pinned() {
+		return ""
+	}
+	label := "↓ jump to latest"
+	if m.unseen > 1 {
+		label = fmt.Sprintf("↓ %d new lines · End to jump", m.unseen)
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#101018")).
+		Background(m.th.Accent).
+		Padding(0, 1).
+		Render(label)
+}
+
+// pinned reports whether the transcript is following the output, which means
+// the viewport is scrolled to the end.
+//
+// It is the single source of truth for auto-scroll, read before content
+// changes. Everything else - the indicator, the End key, the scroll keys -
+// agrees with it rather than keeping its own flag, because a second flag is a
+// second thing to get wrong.
+func (m *Model) pinned() bool { return m.vp.AtBottom() }
+
+// scrollKey handles the keys that move the transcript, and reports whether it
+// handled the message.
+//
+// Every one of them is a key that cannot be produced by typing a prompt, which
+// is the whole reason the viewport's own keymap was cleared: the transcript is
+// scrolled with PageUp/PageDown, the arrow keys with a modifier, and End snaps
+// back to the bottom.
+func (m *Model) scrollKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyPgUp:
+		m.vp.HalfPageUp()
+		return true
+	case tea.KeyPgDown:
+		m.vp.HalfPageDown()
+		return true
+	case tea.KeyEnd:
+		m.vp.GotoBottom()
+		return true
+	case tea.KeyHome:
+		m.vp.GotoTop()
+		return true
+	}
+	switch msg.String() {
+	// alt rather than shift: bubbletea v1's KeyMsg has no shift field, so a
+	// shift+arrow cannot even be represented, let alone tested. Terminals that
+	// do send it as alt+arrow anyway.
+	case "alt+up":
+		m.vp.LineUp(1)
+		return true
+	case "alt+down":
+		m.vp.LineDown(1)
+		return true
+	case "ctrl+up":
+		m.vp.HalfPageUp()
+		return true
+	case "ctrl+down":
+		m.vp.HalfPageDown()
+		return true
+	}
+	return false
 }

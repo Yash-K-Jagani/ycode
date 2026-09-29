@@ -35,11 +35,43 @@ type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
 	order []string
+	// concurrent and isolatable record the two capability flags per instance,
+	// rather than looking them up by name in the catalog at the point of use.
+	//
+	// The catalog answers for built-ins, but a plugin or a test cannot be
+	// classified by name lookup, and a package-level IsConcurrent(name) had no
+	// way to ask the instance that actually holds the tool. Storing them here
+	// means a caller can declare a capability for a tool this package has never
+	// heard of, and that the agent loop is asking the right object.
+	concurrent map[string]bool
+	isolatable map[string]bool
 }
 
-func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
+func NewRegistry() *Registry {
+	return &Registry{
+		tools:      map[string]Tool{},
+		concurrent: map[string]bool{},
+		isolatable: map[string]bool{},
+	}
+}
 
+// Add registers a tool. Its capabilities come from the catalog when it is a
+// built-in; an unknown tool is local and not concurrent, which is the safe
+// reading of a program this package has not inspected.
 func (r *Registry) Add(t Tool) {
+	if t == nil {
+		return
+	}
+	r.AddWith(t, IsConcurrent(t.Name()), IsIsolatable(t.Name(), t))
+}
+
+// AddWith registers a tool with explicit capabilities, overriding the catalog.
+//
+// This is how a plugin declares that its tool only reads, or a test registers
+// an instrumented stand-in for a built-in. The override is deliberate rather
+// than a fallback: the caller has the tool in hand and knows what it does,
+// whereas the catalog only knows the name.
+func (r *Registry) AddWith(t Tool, concurrent, isolatable bool) {
 	if t == nil {
 		return
 	}
@@ -49,6 +81,26 @@ func (r *Registry) Add(t Tool) {
 		r.order = append(r.order, t.Name())
 	}
 	r.tools[t.Name()] = t
+	r.concurrent[t.Name()] = concurrent
+	r.isolatable[t.Name()] = isolatable
+}
+
+// Concurrent reports whether a registered tool only reads, and so may run at
+// the same time as other concurrent tools.
+func (r *Registry) Concurrent(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.concurrent[name]
+}
+
+// Isolatable reports whether a registered tool may be handed to a subagent.
+func (r *Registry) Isolatable(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if v, ok := r.isolatable[name]; ok {
+		return v
+	}
+	return IsIsolatable(name, nil)
 }
 
 func (r *Registry) Get(name string) (Tool, bool) {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
@@ -274,11 +275,36 @@ func promptInt(label string, def, min, max int) (int, bool) {
 	}
 }
 
+// stdinReader is buffered once per stdin file and reused.
+//
+// Each prompt used to build its own bufio.Reader, which looked harmless and
+// was not: a reader buffers everything the pipe has already delivered, and
+// discarding it throws away whatever followed the first line. So a user who
+// mistyped their answer - the exact moment promptInt's retry loop exists to
+// handle - had the rest of their input eaten and was dropped out of the
+// wizard instead of being asked again.
+//
+// Keyed on the *os.File so a test that swaps os.Stdin gets a fresh reader.
+var (
+	stdinMu  sync.Mutex
+	stdinSrc *os.File
+	stdinBuf *bufio.Reader
+)
+
+func lineReader() *bufio.Reader {
+	stdinMu.Lock()
+	defer stdinMu.Unlock()
+	if stdinBuf == nil || stdinSrc != os.Stdin {
+		stdinSrc = os.Stdin
+		stdinBuf = bufio.NewReader(os.Stdin)
+	}
+	return stdinBuf
+}
+
 // promptLine reads one line. Returns ok=false on EOF/interrupt.
 func promptLine(label string) (string, bool) {
 	fmt.Printf("  %s: ", label)
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
+	line, err := lineReader().ReadString('\n')
 	if err != nil && line == "" {
 		fmt.Println()
 		return "", false
@@ -299,8 +325,7 @@ func promptSecret(label string) (string, bool) {
 		return promptLine(label)
 	}
 	defer func() { _ = term.Restore(fd, oldState) }()
-	r := bufio.NewReader(os.Stdin)
-	line, err := r.ReadString('\n')
+	line, err := lineReader().ReadString('\n')
 	fmt.Println()
 	if err != nil && line == "" {
 		return "", false

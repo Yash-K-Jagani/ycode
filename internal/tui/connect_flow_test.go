@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/openaicompat"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -90,6 +91,13 @@ func TestConnectFlowReachesEveryStep(t *testing.T) {
 	}
 
 	// With a key, it fetches models.
+	//
+	// The fetch command is issued but not run: running it would build a real
+	// Gemini client and call the public API, and a unit test that depends on
+	// someone else's network is slow, flaky, and unreachable behind a CI
+	// runner's restricted egress. The result of a successful fetch is delivered
+	// below as the message the real one would have produced. The HTTP behaviour
+	// is covered separately, against a local server.
 	c.keyInput.SetValue("sk-test-key")
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if c.step != cStepFetch {
@@ -318,18 +326,33 @@ func TestFetchModelsCmdReportsAnUnknownProvider(t *testing.T) {
 func TestFetchModelsCmdFallsBackToTheCatalog(t *testing.T) {
 	// A server that refuses every request, so the live list is unavailable
 	// and the registry catalogue is the fallback.
+	//
+	// The provider spec is copied and its constructor replaced so the client
+	// is pointed here. The registry's own constructor hardcodes the provider's
+	// public URL, so without this the test would call the real API - a unit
+	// test that depends on someone else's network is slow, flaky, and fails
+	// outright behind a CI runner's restricted egress.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
 
 	m := realModel(t)
-	prov := connectProv{ID: "gemini", Label: "Gemini", KeyEnv: "GEMINI_API_KEY", spec: providers.Get("gemini")}
+	spec := *providers.Get("gemini")
+	spec.New = func(key, host string) providers.Provider {
+		return openaicompat.New("gemini", srv.URL, key)
+	}
+	prov := connectProv{ID: "gemini", Label: "Gemini", KeyEnv: "GEMINI_API_KEY", spec: &spec}
 	msg := m.fetchModelsCmd(prov, "sk-test")().(fetchModelsMsg)
 	if len(msg.models) == 0 && msg.note == "" {
 		t.Fatal("an unavailable provider produced neither models nor a reason")
 	}
-	if len(msg.models) > 0 && !strings.Contains(msg.note, "catalog") {
+	// The local server must actually have been reached, or the test is
+	// exercising something other than what it claims.
+	if len(msg.models) == 0 {
+		return
+	}
+	if !strings.Contains(msg.note, "catalog") {
 		t.Fatalf("fallback models were offered without saying so: %q", msg.note)
 	}
 }

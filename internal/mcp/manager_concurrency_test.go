@@ -24,17 +24,39 @@ import (
 
 // newPipeClient builds a Client talking to fakeServer over in-process pipes,
 // and reports when it is closed.
+//
+// The teardown order matters, and getting it wrong hangs the whole package
+// rather than failing a test. Closing the read end while fakeServer is blocked
+// in Read does not interrupt it: on Windows os.File.Close waits for the read to
+// return, and the read is waiting for a write end that is still open. That
+// deadlocked the test binary for the full ten-minute timeout, intermittently,
+// depending on whether the reader happened to be mid-Read at teardown.
+//
+// So: close the write end first, which gives the reader EOF and lets it
+// finish; wait for it; and only then close the rest.
 func newPipeClient(t *testing.T, closed *atomic.Int32) *Client {
 	t.Helper()
-	c2sR, c2sW, _ := os.Pipe() // client writes, server reads
-	s2cR, s2cW, _ := os.Pipe() // server writes, client reads
+	c2sR, c2sW, err := os.Pipe() // client writes, server reads
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2cR, s2cW, err := os.Pipe() // server writes, client reads
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		fakeServer(t, c2sR, s2cW)
+	}()
 	t.Cleanup(func() {
-		_ = c2sR.Close()
+		// EOF for the reader, then wait for it to notice.
 		_ = c2sW.Close()
-		_ = s2cR.Close()
+		<-serverDone
+		_ = c2sR.Close()
 		_ = s2cW.Close()
+		_ = s2cR.Close()
 	})
-	go fakeServer(t, c2sR, s2cW)
 
 	c := &Client{stdin: *json.NewEncoder(c2sW), closeHook: func() { closed.Add(1) }}
 	c.scan = bufio.NewScanner(s2cR)

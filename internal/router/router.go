@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,11 +22,60 @@ import (
 type Router struct {
 	cfg   config.Config
 	stats *Stats
+
+	// mu guards the provider cache below.
+	mu sync.RWMutex
+	// cache memoises providers per name. Constructing a provider built a fresh
+	// *http.Client, and therefore a fresh connection pool, and Provider was
+	// called once per turn and again per fallback candidate. With Go's default
+	// MaxIdleConnsPerHost of 2, almost every turn paid a fresh TCP connect and
+	// a fresh TLS handshake to a host we had just been talking to. Caching the
+	// provider keeps the pool alive across turns.
+	cache map[string]cachedProvider
+
+	// factory builds a provider. It is a field rather than a direct call into
+	// the providers table so tests can drive the fallback chain without
+	// standing up four HTTP servers, and so a future provider type (a local
+	// adapter, say) can be substituted without touching the call sites.
+	factory func(id, key, host string) (providers.Provider, error)
 }
 
-func New(cfg config.Config) *Router { return &Router{cfg: cfg, stats: NewStats()} }
+// cachedProvider is a memoised provider plus the key it was built for, so a
+// changed API key replaces it instead of being ignored.
+type cachedProvider struct {
+	prov providers.Provider
+	key  string
+	host string
+}
 
-func (r *Router) Update(cfg config.Config) { r.cfg = cfg }
+func New(cfg config.Config) *Router {
+	return &Router{
+		cfg:     cfg,
+		stats:   NewStats(),
+		cache:   map[string]cachedProvider{},
+		factory: defaultFactory,
+	}
+}
+
+// defaultFactory is the real construction path: look the spec up and build it.
+func defaultFactory(id, key, host string) (providers.Provider, error) {
+	spec := providers.Get(id)
+	if spec == nil {
+		return nil, fmt.Errorf("unknown provider %q", id)
+	}
+	return spec.New(key, host), nil
+}
+
+func (r *Router) Update(cfg config.Config) {
+	r.cfg = cfg
+	// A new key or host invalidates the cached clients, so a key the user just
+	// pasted takes effect on the next turn.
+	r.mu.Lock()
+	if len(r.cache) > 0 {
+		r.cache = map[string]cachedProvider{}
+	}
+	r.mu.Unlock()
+}
 
 func (r *Router) Stats() *Stats { return r.stats }
 
@@ -36,7 +87,24 @@ func (r *Router) Provider(name string) (providers.Provider, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("unknown provider %q", name)
 	}
-	return spec.New(r.cfg.KeyFor(spec.ID), r.cfg.OllamaHost), nil
+	key := r.cfg.KeyFor(spec.ID)
+	host := r.cfg.OllamaHost
+
+	r.mu.RLock()
+	if c, ok := r.cache[name]; ok && c.key == key && c.host == host {
+		r.mu.RUnlock()
+		return c.prov, nil
+	}
+	r.mu.RUnlock()
+
+	prov, err := r.factory(name, key, host)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	r.cache[name] = cachedProvider{prov: prov, key: key, host: host}
+	r.mu.Unlock()
+	return prov, nil
 }
 
 func (r *Router) Active() (providers.Provider, string, error) {
@@ -105,31 +173,60 @@ type Fallback struct {
 
 // StreamWithFallback tries the active provider, then configured cloud fallbacks.
 // Returns the text, a fallback note ("" when primary worked), and error.
+//
+// Each attempt streams into a private buffer and is copied to w only once it
+// has succeeded in full. That is the whole point of the buffering: a provider
+// that fails halfway through has already written its partial answer to the
+// writer it was given, so streaming straight into the caller's writer spliced a
+// truncated first attempt in front of a complete second one. The user saw two
+// answers welded together - the tail of a model that died mid-sentence followed
+// by the head of one that worked - and neither the transcript nor the audit log
+// could tell that had happened.
+//
+// A failed attempt's partial output is kept for the error message, so nothing is
+// lost diagnostically; it is just not shown as if it were the answer.
 func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message, w io.Writer) (string, string, error) {
 	p, model, err := r.Active()
 	if err != nil {
 		return "", "", err
 	}
 	t0 := time.Now()
-	chunk, err := p.Stream(ctx, model, msgs, w)
+	var attempt bytes.Buffer
+	chunk, err := p.Stream(ctx, model, msgs, &attempt)
 	r.stats.Record(r.cfg.ActiveProvider, time.Since(t0), len(chunk.Delta)/4, err == nil)
 	if err == nil {
+		_, _ = w.Write(attempt.Bytes())
 		return chunk.Delta, "", nil
 	}
-	firstErr := err
+	primaryErr := err
+	// Every attempt's error is kept. Returning only the first meant that when
+	// all three providers failed, the message named the primary and said
+	// nothing about why the other two were rejected - which is usually the
+	// part that explains the real problem (an expired key, a rate limit).
+	var errs []string
+	errs = append(errs, fmt.Sprintf("%s: %v", r.cfg.ActiveProvider, primaryErr))
 	for _, fb := range r.Fallbacks() {
 		fp, err := r.Provider(fb.Provider)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", fb.Provider, err))
 			continue
 		}
+		attempt.Reset()
 		t0 := time.Now()
-		chunk, err := fp.Stream(ctx, fb.Model, msgs, w)
+		chunk, err := fp.Stream(ctx, fb.Model, msgs, &attempt)
 		r.stats.Record(fb.Provider, time.Since(t0), len(chunk.Delta)/4, err == nil)
 		if err == nil {
-			return chunk.Delta, fmt.Sprintf("↳ primary %s failed (%v); fell back to %s/%s", r.cfg.ActiveProvider, firstErr, fb.Provider, fb.Model), nil
+			_, _ = w.Write(attempt.Bytes())
+			note := fmt.Sprintf("↳ primary %s failed (%v); fell back to %s/%s",
+				r.cfg.ActiveProvider, primaryErr, fb.Provider, fb.Model)
+			if len(errs) > 1 {
+				note += fmt.Sprintf(" (%d earlier attempt(s) also failed)", len(errs)-1)
+			}
+			return chunk.Delta, note, nil
 		}
+		errs = append(errs, fmt.Sprintf("%s: %v", fb.Provider, err))
 	}
-	return "", "", firstErr
+	return "", "", fmt.Errorf("every provider failed — %s", strings.Join(errs, "; "))
 }
 
 // --- latency stats ---
@@ -140,6 +237,15 @@ type ProviderStat struct {
 	TotalMs  int64   `json:"total_ms"`
 	Tokens   int     `json:"tokens"`
 	AvgTokS  float64 `json:"avg_tok_s,omitempty"`
+	// FastestTokS is the best single-call rate observed, which is a different
+	// question from the average and a useful one: it is what the provider did
+	// on its best run, and it is the number to compare a slow session against.
+	FastestTokS float64 `json:"fastest_tok_s,omitempty"`
+	// TokSRateSum/RateCount accumulate the per-call rates. They are persisted
+	// rather than a running mean so that a restart does not silently change
+	// the figure the user has been reading.
+	TokSRateSum float64 `json:"tok_s_rate_sum,omitempty"`
+	RateCount   int     `json:"rate_count,omitempty"`
 }
 
 type Stats struct {
@@ -188,8 +294,26 @@ func (s *Stats) Record(provider string, d time.Duration, tokens int, ok bool) {
 	if !ok {
 		st.Failures++
 	}
-	if d.Seconds() > 0 {
-		st.AvgTokS = float64(st.Tokens) / (float64(st.TotalMs) / 1000)
+	// AvgTokS used to be cumulative tokens over cumulative seconds. That is
+	// aggregate throughput, not an average of rates, and the two disagree in a
+	// way that misleads: one 10s call producing 1000 tokens followed by nine
+	// instant failures reports 100 tok/s as the "average", which reads as a
+	// healthy provider when almost every call failed.
+	//
+	// The mean is now taken over the calls that actually produced tokens. A
+	// call that produced none has no rate, and including a zero would drag the
+	// average toward a number that describes failures rather than throughput.
+	secs := d.Seconds()
+	if tokens > 0 && secs > 0 {
+		rate := float64(tokens) / secs
+		st.TokSRateSum += rate
+		st.RateCount++
+		if rate > st.FastestTokS {
+			st.FastestTokS = rate
+		}
+	}
+	if st.RateCount > 0 {
+		st.AvgTokS = st.TokSRateSum / float64(st.RateCount)
 	}
 	s.persist()
 }

@@ -3,3 +3,8 @@
 /dist/
 *.tmp
 .ycode-local/
+coverage.out
+
+# PowerShell drops a module analysis cache in whatever directory a background
+# job starts in, which can be the repository root. It is not ours.
+/Microsoft/

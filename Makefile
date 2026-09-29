@@ -44,8 +44,23 @@ test-all:
 	$(GO) test ./...
 
 # The race detector needs a 64-bit C toolchain, so this only works where one
-# exists - Linux and macOS. It cannot run on 32-bit Windows, which is why CI
-# runs it in its own job rather than in the main matrix.
+# exists - Linux and macOS, and Windows with a 64-bit gcc. It cannot run
+# against a 32-bit gcc, which fails with "cc1.exe: sorry, unimplemented:
+# 64-bit mode not compiled in".
+#
+# On Windows, install a 64-bit mingw-w64 (no admin needed, installs per-user
+# and side by side with any existing MinGW):
+#
+#   winget install --id BrechtSanders.WinLibs.POSIX.UCRT \
+#     --accept-package-agreements --accept-source-agreements
+#
+# then point the build at it, since a 32-bit gcc may come first on PATH:
+#
+#   set PATH=<winlibs>\mingw64\bin;%PATH%
+#   set CC=x86_64-w64-mingw32-gcc
+#   make race
+#
+# CI runs this in its own job rather than the main matrix, for the same reason.
 .PHONY: race
 race:
 	$(GO) test -short -race -p 2 ./...

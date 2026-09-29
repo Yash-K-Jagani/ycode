@@ -46,8 +46,17 @@ type Client struct {
 	// the race detector caught: a call after a timeout read it while the
 	// previous reader goroutine was still writing it.
 	dead atomic.Bool
-	// kill is idempotent: it guards the kill/wait in the timeout path.
+	// kill is idempotent: it guards the kill in the timeout path.
 	killOnce sync.Once
+	// waitOnce guards the reap, which must happen after every read has
+	// finished. Kept apart from killOnce because the two are not the same
+	// moment: the process is killed while the reader is still draining, and
+	// only reaped once it is not.
+	waitOnce sync.Once
+	// readers counts goroutines inside readResponse. Close only reaps when
+	// this is zero, because reaping under an active reader is the documented
+	// incorrect ordering.
+	readers atomic.Int32
 	// closeHook is a test seam for observing that Close was reached. It is nil
 	// in production and costs one branch on a path that already does a kill.
 	closeHook func()
@@ -82,11 +91,29 @@ const callTimeout = 60 * time.Second
 
 // killServer stops the process, which is the only portable way to unblock a
 // read on its stdout pipe.
+//
+// It deliberately does not Wait. os/exec documents that it is "incorrect to
+// call Wait before all reads from the pipe have completed", because Wait
+// closes the pipe once the command exits - and the reader goroutine spawned by
+// call is normally still in Scan at exactly this moment. Waiting here can
+// block indefinitely, and because Manager.Close holds the manager lock across
+// Close, that turns into a deadlock of everything touching the manager rather
+// than one stuck request. Reaping is reap's job, and it only runs once the
+// reads are finished.
 func (c *Client) killServer() {
 	c.dead.Store(true)
 	c.killOnce.Do(func() {
 		if c.cmd != nil && c.cmd.Process != nil {
 			_ = c.cmd.Process.Kill()
+		}
+	})
+}
+
+// reap collects the exited process. It must not be called until every read
+// from the stdout pipe has finished.
+func (c *Client) reap() {
+	c.waitOnce.Do(func() {
+		if c.cmd != nil {
 			_ = c.cmd.Wait()
 		}
 	})
@@ -141,7 +168,9 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	}
 	done := make(chan outcome, 1)
 	go func() {
+		c.readers.Add(1)
 		raw, err := c.readResponse(id, method)
+		c.readers.Add(-1)
 		done <- outcome{raw, err}
 	}()
 
@@ -150,12 +179,13 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 		return r.raw, r.err
 	case <-ctx.Done():
 		// Killing the server closes the pipe, which releases the reader. Wait
-		// (briefly) for it so the scanner is never read by two goroutines.
+		// for it before reaping, so Wait never runs while a read is in flight.
 		c.killServer()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
 		}
+		c.reap()
 		return nil, fmt.Errorf("mcp %s: %w", method, ctx.Err())
 	}
 }
@@ -226,8 +256,14 @@ func (c *Client) CallTool(ctx context.Context, name string, args json.RawMessage
 	return out, nil
 }
 
+// Close stops the server. It reaps the process only when no read is in flight;
+// if one is, that reader's owner reaps when it finishes, which is the only
+// ordering os/exec allows.
 func (c *Client) Close() {
 	c.killServer()
+	if c.readers.Load() == 0 {
+		c.reap()
+	}
 	if c.closeHook != nil {
 		c.closeHook()
 	}

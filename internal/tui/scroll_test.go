@@ -9,6 +9,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
 	"github.com/Yash-K-Jagani/ycode/internal/router"
+	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -30,8 +31,12 @@ func bareModel(t *testing.T) Model {
 	vp := newViewport(80, 20)
 	workdir := t.TempDir()
 	m := Model{
-		cfg:     cfg,
-		router:  router.New(cfg),
+		cfg:    cfg,
+		router: router.New(cfg),
+		// A session, because submitting a turn needs one. Without it the
+		// submit path panics, which looks like a bug in the input box rather
+		// than a fixture that is missing half a Model.
+		sess:    sessions.New("ollama", "fake-model"),
 		ta:      ta,
 		vp:      vp,
 		mode:    modes.Build,

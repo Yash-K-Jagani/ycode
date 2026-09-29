@@ -61,6 +61,9 @@ type Model struct {
 	// latest affordance when they are not.
 	unseen int
 
+	// hist is the submitted-prompt history for the input box. See input.go.
+	hist inputHistory
+
 	// side holds the sidebar's disk-backed values. The sidebar is rendered on
 	// every message, and bubbletea sends one per streamed token, so reading the
 	// todo file and the batch queue there meant two file/SQLite reads per
@@ -221,11 +224,7 @@ func newViewport(w, h int) viewport.Model {
 }
 
 func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir string) Model {
-	ta := textarea.New()
-	ta.Placeholder = "Ask anything…  (/help, Tab modes, @file to attach)"
-	ta.Focus()
-	ta.CharLimit = 8000
-	ta.SetHeight(3)
+	ta := newTextarea()
 	th := theme.For(cfg.Theme)
 	ApplyTheme(th)
 	ag, _ := agents.Get("builder")
@@ -718,6 +717,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.atIdx = 0
 			}
 		}
+		if handled, resized := m.handleInputKey(msg); handled {
+			if resized {
+				m.resizeInput()
+			}
+			return m, nil
+		}
 		if m.scrollKey(msg) {
 			return m, nil
 		}
@@ -828,6 +833,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.busy {
 				return m, nil
 			}
+			// Recorded before the submit, because submit clears the box and
+			// the value is not available afterwards.
+			m.hist.add(m.ta.Value())
+			m.hist.reset()
 			return m, m.submit()
 		}
 	}
@@ -845,6 +854,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.palIdx = 0
 		m.atHide = false
 		m.atIdx = 0
+		// Re-measure the box whenever the content changes, not only on the
+		// keys that can insert a line break. Backspacing from a pasted log has
+		// to shrink the prompt back, or it stays tall and empty.
+		m.resizeInput()
 	}
 	return m, tea.Batch(cmds...)
 }

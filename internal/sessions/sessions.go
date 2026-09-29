@@ -1,11 +1,14 @@
 package sessions
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"time"
@@ -26,10 +29,35 @@ type Session struct {
 
 func dir() string { return filepath.Join(config.Dir(), "sessions") }
 
+// newID returns a session id that stays unique when the clock does not.
+//
+// Ids used to be time.Now().UnixNano() and nothing else. That is unique only
+// if the system clock's resolution is finer than the gap between two calls,
+// which is not something a program can rely on: a macOS runner hands out
+// microsecond-resolution wall time, and several sessions created in a tight
+// loop get the same nanosecond. The ids then collide, and because a session is
+// stored as <id>.json, the second save silently overwrites the first - a user's
+// session history disappearing with no error anywhere.
+//
+// The random suffix also makes ids unique across processes, which matters when
+// two ycode windows start at once. The character set is hex plus a dash, since
+// the id becomes a filename.
+func newID(now time.Time) string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand does not fail in practice. If it somehow did, a
+		// process-local counter is still better than a bare timestamp.
+		return fmt.Sprintf("%d-%d", now.UnixNano(), atomic.AddUint64(&idFallback, 1))
+	}
+	return fmt.Sprintf("%d-%s", now.UnixNano(), hex.EncodeToString(b[:]))
+}
+
+var idFallback uint64
+
 func New(provider, model string) *Session {
 	now := time.Now()
 	return &Session{
-		ID:        fmt.Sprintf("%d", now.UnixNano()),
+		ID:        newID(now),
 		Title:     "session " + now.Format("2006-01-02 15:04"),
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -104,7 +132,7 @@ func Fork(id string) (*Session, error) {
 	}
 	now := time.Now()
 	fork := &Session{
-		ID:        fmt.Sprintf("%d", now.UnixNano()),
+		ID:        newID(now),
 		Title:     src.Title + " (fork)",
 		CreatedAt: now,
 		UpdatedAt: now,

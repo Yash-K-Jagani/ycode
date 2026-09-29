@@ -29,6 +29,24 @@ type entry struct {
 	// timeout is how long one call may run. A tool whose own internal
 	// deadline is shorter still wins, because it derives from the same context.
 	timeout time.Duration
+	// concurrent is true when the tool only reads: it mutates no local state,
+	// so several such calls may be in flight at once without them interfering.
+	// The agent loop uses this to fan out the read-only calls in one assistant
+	// message instead of serialising them, which is the common shape of a
+	// "read these three files" turn.
+	//
+	// The bar is deliberately strict. A tool that reads *most* of the time but
+	// can write on some code path - git commit, github issue_create, api POST,
+	// db write, todo add, memory save, models import, notebook execute, and
+	// every code-execution tool - is NOT concurrent, because the classification
+	// has to hold for every call the model might make, including the one it
+	// invents mid-turn.
+	concurrent bool
+	// isolatable is true when the tool is safe to hand to a subagent. A
+	// subagent runs with a narrow allow-list and returns only a summary, so a
+	// tool that writes the user's files or talks to a network is not one to
+	// delegate without the user watching.
+	isolatable bool
 	// note records a judgement call worth explaining at the point of decision.
 	note string
 }
@@ -43,17 +61,30 @@ const (
 )
 
 var catalog = []entry{
-	// Reading and searching cannot leave the machine.
-	{name: "read", build: func(string) Tool { return &ReadTool{} }, timeout: quick},
-	{name: "changes", build: func(w string) Tool { return &ChangesTool{Workdir: w} }, timeout: quick},
-	{name: "grep", build: func(string) Tool { return &GrepTool{} }, timeout: quick},
-	{name: "glob", build: func(string) Tool { return &GlobTool{} }, timeout: quick},
-	{name: "tree", build: func(string) Tool { return &TreeTool{} }, timeout: quick},
-	{name: "summary", build: func(string) Tool { return &SummaryTool{} }, timeout: quick},
-	{name: "security", build: func(w string) Tool { return &SecurityTool{Workdir: w} }, timeout: normal},
-	{name: "todo", build: func(w string) Tool { return &TodoTool{Workdir: w} }, timeout: quick},
-	{name: "memory", build: func(string) Tool { return &MemoryTool{} }, timeout: quick},
-	{name: "models", build: func(w string) Tool { return &ModelsTool{Workdir: w} }, timeout: normal},
+	// Pure readers: no local mutation on any code path, so they are safe to
+	// run concurrently and safe to delegate to a subagent.
+	{name: "read", build: func(string) Tool { return &ReadTool{} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "changes", build: func(w string) Tool { return &ChangesTool{Workdir: w} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "grep", build: func(string) Tool { return &GrepTool{} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "glob", build: func(string) Tool { return &GlobTool{} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "tree", build: func(string) Tool { return &TreeTool{} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "summary", build: func(string) Tool { return &SummaryTool{} }, timeout: quick, concurrent: true, isolatable: true},
+	{name: "security", build: func(w string) Tool { return &SecurityTool{Workdir: w} }, timeout: normal, concurrent: true, isolatable: true},
+	// A fetch, so it reaches the network, but it writes nothing local and the
+	// url allowlist is the same one every call goes through.
+	{name: "browser", build: func(string) Tool { return &BrowserTool{} }, network: true, timeout: quick,
+		concurrent: true, isolatable: true, note: "fetches arbitrary URLs"},
+
+	// Read-mostly tools. Each has at least one action that writes (a file, a
+	// queue, a subprocess), so they stay sequential. A tool that is parallel
+	// safe on some arguments and not others cannot be classified, because the
+	// model chooses the arguments.
+	{name: "todo", build: func(w string) Tool { return &TodoTool{Workdir: w} }, timeout: quick, isolatable: true,
+		note: "list is read-only but add/done write todos.json"},
+	{name: "memory", build: func(string) Tool { return &MemoryTool{} }, timeout: quick, isolatable: true,
+		note: "recall is read-only but save rewrites memory.json"},
+	{name: "models", build: func(w string) Tool { return &ModelsTool{Workdir: w} }, timeout: normal, isolatable: true,
+		note: "info is read-only but import writes to Ollama"},
 
 	// Writing. Confined to the workdir and blocked in read-only modes by the
 	// tools themselves; see containPath.
@@ -65,15 +96,13 @@ var catalog = []entry{
 	{name: "delete", build: func(w string) Tool { return &DeleteTool{Workdir: w} }, timeout: quick},
 	{name: "patch", build: func(w string) Tool { return &PatchTool{Workdir: w} }, timeout: normal},
 
-	// Reaches the network.
+	// Reaches the network, and several can write to the world.
 	{name: "api", build: func(string) Tool { return &APITool{} }, network: true, timeout: quick,
 		note: "arbitrary HTTP methods, headers and bodies"},
-	{name: "browser", build: func(string) Tool { return &BrowserTool{} }, network: true, timeout: quick,
-		note: "fetches arbitrary URLs"},
 	{name: "github", build: func(w string) Tool { return &GitHubTool{Workdir: w} }, network: true, timeout: external,
 		note: "GitHub API; clone is slow on a cold cache"},
 	{name: "git", build: func(w string) Tool { return &GitTool{Workdir: w} }, network: true, timeout: normal,
-		note: "fetch and push"},
+		note: "fetch and push; commit/checkout mutate the working tree"},
 	{name: "db", build: func(string) Tool { return &DBTool{} }, network: true, timeout: quick,
 		note: "postgres/mysql/mongo DSNs can name remote hosts"},
 	{name: "vscode", build: func(w string) Tool { return &VSCodeTool{Workdir: w} }, network: true, timeout: quick,

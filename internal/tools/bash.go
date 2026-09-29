@@ -33,6 +33,16 @@ func (BashTool) Schema() string {
 }
 
 func (t *BashTool) Run(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.Stream(ctx, args, nil)
+}
+
+// Stream runs the command and reports output as it is printed. Run is this with
+// no sink, so both paths cannot drift apart.
+//
+// A three-minute build used to produce no output for three minutes, which reads
+// as a hang rather than as progress; the TUI now shows the command's own
+// output while it runs.
+func (t *BashTool) Stream(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
 	var a struct {
 		Command string `json:"command"`
 	}
@@ -62,15 +72,13 @@ func (t *BashTool) Run(ctx context.Context, args json.RawMessage) (string, error
 	if t.Workdir != "" {
 		cmd.Dir = t.Workdir
 	}
-	out, err := cmd.CombinedOutput()
-	if len(out) > maxOutBytes {
-		out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
-	}
-	if ctx.Err() == context.DeadlineExceeded {
+	res := execStream(ctx, cmd, emit, maxOutBytes)
+	out := res.out
+	if res.timedOut {
 		return string(out), fmt.Errorf("timeout after %s", bashTimeout)
 	}
-	if err != nil {
-		return string(out), fmt.Errorf("exit error: %v\n%s", err, string(out))
+	if res.err != nil {
+		return string(out), fmt.Errorf("exit error: %v\n%s", res.err, string(out))
 	}
 	if len(out) == 0 {
 		return "(no output)", nil

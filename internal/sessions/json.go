@@ -36,10 +36,25 @@ func (jsonStore) List() ([]Session, error) {
 		if err := json.Unmarshal(data, &s); err != nil {
 			continue
 		}
+		s.MessageCount = len(s.Messages)
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	return out, nil
+}
+
+// ListMeta for the JSON backend still has to read each file, because the whole
+// session is one JSON document and there is no column to leave out. The
+// messages are dropped straight after decoding, along with the count, so a
+// caller that needs the transcript is using List and one that does not is not
+// holding a few hundred sessions' worth of messages while it filters.
+func (jsonStore) ListMeta() ([]Session, error) {
+	list, err := jsonStore{}.List()
+	for i := range list {
+		list[i].MessageCount = len(list[i].Messages)
+		list[i].Messages = nil
+	}
+	return list, err
 }
 
 func (jsonStore) Load(id string) (*Session, error) {
@@ -51,6 +66,7 @@ func (jsonStore) Load(id string) (*Session, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
 	}
+	s.MessageCount = len(s.Messages)
 	return &s, nil
 }
 

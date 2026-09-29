@@ -25,6 +25,15 @@ type Session struct {
 	Provider  string             `json:"provider"`
 	Model     string             `json:"model"`
 	Messages  []apitypes.Message `json:"messages"`
+	// MessageCount is how many messages the session has. It is stored beside
+	// the messages rather than derived from them, because the only callers that
+	// want it - the search filter, the picker - are exactly the ones that
+	// should not have to load every transcript in the database to count them.
+	//
+	// It is not part of the session file: there it is trivially len(Messages),
+	// and duplicating it would be a second thing to keep correct. Populated by
+	// every read path.
+	MessageCount int `json:"-"`
 }
 
 func dir() string { return filepath.Join(config.Dir(), "sessions") }
@@ -69,6 +78,11 @@ func New(provider, model string) *Session {
 func (s *Session) Save() error { return backend.Save(s) }
 
 func List() ([]Session, error) { return backend.List() }
+
+// ListMeta returns sessions without their messages, for callers that only need
+// identity - filtering, pruning, counting. See Store.ListMeta for why the
+// distinction is worth making.
+func ListMeta() ([]Session, error) { return backend.ListMeta() }
 
 func Load(id string) (*Session, error) { return backend.Load(id) }
 

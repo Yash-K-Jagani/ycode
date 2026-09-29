@@ -21,17 +21,18 @@ func (s *SQLStore) Save(sess *Session) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO sessions(id,title,created,updated,provider,model,messages)
-		VALUES(?,?,?,?,?,?,?)
+	sess.MessageCount = len(sess.Messages)
+	_, err = s.db.Exec(`INSERT INTO sessions(id,title,created,updated,provider,model,msgs,messages)
+		VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(id) DO UPDATE SET title=excluded.title, updated=excluded.updated,
-		provider=excluded.provider, model=excluded.model, messages=excluded.messages`,
+		provider=excluded.provider, model=excluded.model, msgs=excluded.msgs, messages=excluded.messages`,
 		sess.ID, sess.Title, sess.CreatedAt.Format(time.RFC3339), sess.UpdatedAt.Format(time.RFC3339),
-		sess.Provider, sess.Model, string(msgs))
+		sess.Provider, sess.Model, sess.MessageCount, string(msgs))
 	return err
 }
 
 func (s *SQLStore) List() ([]Session, error) {
-	rows, err := s.db.Query(`SELECT id,title,created,updated,provider,model,messages FROM sessions ORDER BY updated DESC`)
+	rows, err := s.db.Query(`SELECT id,title,created,updated,provider,model,msgs,messages FROM sessions ORDER BY updated DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -47,8 +48,37 @@ func (s *SQLStore) List() ([]Session, error) {
 	return out, rows.Err()
 }
 
+// ListMeta returns the same list as List without the message blobs, so
+// filtering and pruning do not read every transcript in the database.
+//
+// The messages column is left out of the SELECT rather than selected and
+// discarded: for a long session it is most of the row, and pulling it into
+// memory only to throw it away is the cost being avoided. The stored count
+// stands in for it, so a caller that displayed "N msgs" still can.
+func (s *SQLStore) ListMeta() ([]Session, error) {
+	rows, err := s.db.Query(`SELECT id,title,created,updated,provider,model,msgs FROM sessions ORDER BY updated DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []Session
+	for rows.Next() {
+		var sess Session
+		var created, updated string
+		if err := rows.Scan(&sess.ID, &sess.Title, &created, &updated,
+			&sess.Provider, &sess.Model, &sess.MessageCount); err != nil {
+			continue
+		}
+		sess.CreatedAt, _ = time.Parse(time.RFC3339, created)
+		sess.UpdatedAt, _ = time.Parse(time.RFC3339, updated)
+		sess.Messages = []apitypes.Message{}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLStore) Load(id string) (*Session, error) {
-	row := s.db.QueryRow(`SELECT id,title,created,updated,provider,model,messages FROM sessions WHERE id=?`, id)
+	row := s.db.QueryRow(`SELECT id,title,created,updated,provider,model,msgs,messages FROM sessions WHERE id=?`, id)
 	sess, err := scanSession(row)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("session not found: %s", id)
@@ -68,7 +98,7 @@ type rowScanner interface {
 func scanSession(r rowScanner) (Session, error) {
 	var s Session
 	var created, updated, msgs string
-	if err := r.Scan(&s.ID, &s.Title, &created, &updated, &s.Provider, &s.Model, &msgs); err != nil {
+	if err := r.Scan(&s.ID, &s.Title, &created, &updated, &s.Provider, &s.Model, &s.MessageCount, &msgs); err != nil {
 		return Session{}, err
 	}
 	s.CreatedAt, _ = time.Parse(time.RFC3339, created)
@@ -76,6 +106,11 @@ func scanSession(r rowScanner) (Session, error) {
 	_ = json.Unmarshal([]byte(msgs), &s.Messages)
 	if s.Messages == nil {
 		s.Messages = []apitypes.Message{}
+	}
+	// A row written before the count existed reports zero; the messages are
+	// right here, so the real number is available for free.
+	if s.MessageCount == 0 {
+		s.MessageCount = len(s.Messages)
 	}
 	return s, nil
 }

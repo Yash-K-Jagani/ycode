@@ -229,7 +229,11 @@ func slashRegistry() map[string]slashHandler {
 			}
 			if f := strings.Fields(args); len(f) >= 1 && f[0] == "search" {
 				q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(args), "search")))
-				list, err := sessions.List()
+				// ListMeta, not List: this matches on the id, title, provider
+				// and model, and the only reason it wanted messages was the
+				// "N msgs" column, which the stored count answers without
+				// reading every transcript in the database.
+				list, err := sessions.ListMeta()
 				if err != nil {
 					return "sessions: " + err.Error(), nil
 				}
@@ -240,7 +244,7 @@ func slashRegistry() map[string]slashHandler {
 					if q != "" && !strings.Contains(hay, q) {
 						continue
 					}
-					fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, len(s.Messages))
+					fmt.Fprintf(&b, "%s — %s (%s/%s) %d msgs\n", s.ID, s.Title, s.Provider, s.Model, s.MessageCount)
 					if n++; n >= 15 {
 						break
 					}
@@ -260,7 +264,7 @@ func slashRegistry() map[string]slashHandler {
 						keep = n
 					}
 				}
-				list, err := sessions.List()
+				list, err := sessions.ListMeta()
 				if err != nil {
 					return "sessions: " + err.Error(), nil
 				}

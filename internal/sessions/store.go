@@ -13,6 +13,18 @@ import (
 type Store interface {
 	Save(*Session) error
 	List() ([]Session, error)
+	// ListMeta returns sessions without their messages, for the callers that
+	// only need identity: the search filter, the prune list, anything that
+	// counts or matches on a title.
+	//
+	// It exists because List() has to load the message blob, and a session's
+	// messages are the bulk of its row - a long session is tens of kilobytes of
+	// JSON. Matching a filter over a few hundred sessions therefore read the
+	// entire conversation history to show a list of titles, and grew with the
+	// length of the sessions rather than the number of them. The picker itself
+	// still needs List, because selecting a session hands the whole transcript
+	// to renderAll.
+	ListMeta() ([]Session, error)
 	Load(id string) (*Session, error)
 	Delete(id string) error
 	Backend() string

@@ -158,36 +158,89 @@ func BudgetFor(model string) int {
 	return b
 }
 
+// compactedMarker replaces the history that did not fit. It is deliberately
+// terse: it is inserted on every trim, so a long explanation would be paid for
+// on every turn for no benefit.
+const compactedMarker = "(earlier history compacted to fit context)"
+
+// perMessageOverhead is the fixed cost attributed to every message, covering
+// the role and separator tokens a real tokenizer adds beyond the raw text.
+const perMessageOverhead = 4
+
+// costOf is the estimated token cost of one message.
+func costOf(m apitypes.Message) int { return len(m.Content)/4 + perMessageOverhead }
+
 func Estimate(msgs []apitypes.Message) int {
 	n := 0
 	for _, m := range msgs {
-		n += len(m.Content)/4 + 4
+		n += costOf(m)
 	}
 	return n
 }
 
 // Trim keeps the leading system message plus the newest messages fitting budget.
-// Returns trimmed slice and number of dropped messages.
+// Returns the trimmed slice and the number of dropped messages.
+//
+// This walks the history once, backwards, accumulating until the next message
+// would not fit. It used to drop one message at a time and re-estimate the
+// whole remaining slice after every drop, which is quadratic: a 500-message
+// session that had to shed 200 of them re-walked roughly 60,000 messages per
+// turn, on the critical path of every turn that had a long history. The
+// quantities involved are tiny - history is capped in the thousands of tokens -
+// but the shape of the cost is what made it worth replacing.
+//
+// The one-pass version has to preserve the old behaviour exactly, including two
+// details that are easy to get wrong:
+//
+//   - At least one non-system message is always kept, even if it alone exceeds
+//     the budget. Returning an empty history would leave the model with no
+//     context at all, which is worse than a context that is over budget.
+//   - The marker message is only inserted when a system message was actually
+//     dropped around. Prefixing a system message onto a conversation that did
+//     not have one changes the shape of the request the provider sees.
 func Trim(msgs []apitypes.Message, budget int) ([]apitypes.Message, int) {
 	if budget <= 0 || Estimate(msgs) <= budget {
 		return msgs, 0
 	}
-	var sys []apitypes.Message
+	hasSys := len(msgs) > 0 && msgs[0].Role == apitypes.RoleSystem
 	rest := msgs
-	if len(msgs) > 0 && msgs[0].Role == apitypes.RoleSystem {
-		sys = msgs[:1]
+	sysCost := 0
+	if hasSys {
+		sysCost = costOf(msgs[0])
 		rest = msgs[1:]
 	}
-	kept := rest
-	dropped := 0
-	for len(kept) > 1 && Estimate(append(sys, kept...)) > budget {
-		kept = kept[1:]
-		dropped++
+
+	// The budget the newest messages have to share, once the system message is
+	// paid for.
+	limit := budget - sysCost
+
+	// Walk back from the newest message, the one we are least willing to lose.
+	// keepFrom ends up as the index of the oldest message still included, so
+	// rest[keepFrom:] is what survives.
+	keepFrom := len(rest)
+	used := 0
+	for i := len(rest) - 1; i >= 0; i-- {
+		c := costOf(rest[i])
+		// The newest message is kept unconditionally; every earlier one has to
+		// fit. Without that exemption a single oversized message would empty
+		// the history.
+		if i < len(rest)-1 && used+c > limit {
+			break
+		}
+		used += c
+		keepFrom = i
 	}
-	out := append(append([]apitypes.Message(nil), sys...), apitypes.Message{Role: apitypes.RoleSystem, Content: "(earlier history compacted to fit context)"})
+
+	kept := rest[keepFrom:]
+	dropped := keepFrom
+
+	// The marker goes in front of what survived, but only when there was a
+	// system message for it to sit alongside.
+	out := make([]apitypes.Message, 0, 1+1+len(kept))
+	if hasSys {
+		out = append(out, msgs[0])
+		out = append(out, apitypes.Message{Role: apitypes.RoleSystem, Content: compactedMarker})
+	}
 	out = append(out, kept...)
-	if len(sys) == 0 {
-		out = out[1:]
-	}
 	return out, dropped
 }

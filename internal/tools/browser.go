@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -62,7 +61,7 @@ func (t *BrowserTool) Run(ctx context.Context, args json.RawMessage) (string, er
 		return "", fmt.Errorf("browser: %w", err)
 	}
 	req.Header.Set("User-Agent", "ycode/1.0")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -27,7 +27,7 @@ func New(host, model string) *Client {
 	if model == "" {
 		model = "nomic-embed-text"
 	}
-	return &Client{Host: strings.TrimSuffix(host, "/"), Model: model, HTTP: &http.Client{Timeout: 5 * time.Minute}}
+	return &Client{Host: strings.TrimSuffix(host, "/"), Model: model, HTTP: httpx.Client(5 * time.Minute)}
 }
 
 func (c *Client) Embed(ctx context.Context, inputs []string) ([][]float64, error) {

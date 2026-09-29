@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 // DefaultRepo is the canonical upstream repository.
@@ -51,7 +53,7 @@ func Latest(ctx context.Context, repo string) (*Release, error) {
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := httpx.Client(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("contacting GitHub: %w", err)

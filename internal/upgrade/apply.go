@@ -17,6 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 )
 
 const checksumName = "checksums.txt"
@@ -54,7 +56,7 @@ func fetch(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", UserAgent)
-	client := &http.Client{Timeout: 10 * time.Minute}
+	client := httpx.Client(10 * time.Minute)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

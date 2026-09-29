@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/headless"
@@ -19,6 +19,12 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/spf13/cobra"
 )
+
+// githubRequestTimeout bounds a single api.github.com call made by `ycode ci`.
+// Generous, because posting a review means uploading a diff, and a CI runner
+// with no deadline at all is a job that hangs until the platform kills it with
+// no output and no error to show for it.
+const githubRequestTimeout = 2 * time.Minute
 
 func ciCmd() *cobra.Command {
 	var post bool
@@ -101,7 +107,13 @@ func postPRComment(body string) error {
 			b, _ := json.Marshal(payload)
 			rdr = bytes.NewReader(b)
 		}
-		req, err := httpx.NewRequest(context.Background(), method, "https://api.github.com"+path, rdr)
+		// Bounded. This call went out on context.Background() with
+		// http.DefaultClient, so it had no deadline and no connection pool:
+		// a CI job that hit a stalled api.github.com hung until the runner
+		// killed it, having produced no output and no error.
+		ctx, cancel := context.WithTimeout(context.Background(), githubRequestTimeout)
+		defer cancel()
+		req, err := httpx.NewRequest(ctx, method, "https://api.github.com"+path, rdr)
 		if err != nil {
 			return 0, nil, fmt.Errorf("github request: %w", err)
 		}
@@ -110,7 +122,7 @@ func postPRComment(body string) error {
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpx.BoundedByContext().Do(req)
 		if err != nil {
 			return 0, nil, err
 		}

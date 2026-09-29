@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -172,7 +171,7 @@ func ghAPI(ctx context.Context, a githubArgs) (string, error) {
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +215,7 @@ func postReview(ctx context.Context, a githubArgs) (string, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Authorization", "Bearer "+tk)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return "", err
 	}

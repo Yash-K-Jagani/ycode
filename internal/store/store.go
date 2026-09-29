@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/internal/plugins"
 	"github.com/Yash-K-Jagani/ycode/internal/skills"
 	"gopkg.in/yaml.v3"
@@ -56,7 +57,7 @@ func Update(url string) (Index, error) {
 	if err != nil {
 		return Index{}, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return Index{}, fmt.Errorf("fetch index: %w", err)
 	}

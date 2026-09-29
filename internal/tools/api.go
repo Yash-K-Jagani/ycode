@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -78,7 +77,7 @@ func (t *APITool) Run(ctx context.Context, args json.RawMessage) (string, error)
 	for k, v := range a.Headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return "", err
 	}

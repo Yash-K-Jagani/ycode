@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/fsnotify/fsnotify"
 )
@@ -411,7 +412,7 @@ func fetchBytes(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.BoundedByContext().Do(req)
 	if err != nil {
 		return nil, err
 	}

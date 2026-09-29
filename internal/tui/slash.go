@@ -210,10 +210,10 @@ func slashRegistry() map[string]slashHandler {
 		"/new": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
 			_ = m.sess.Save()
-			m.msgs = nil
+			m.clearMsgs()
 			m.pendingPlan = ""
 			m.goal = nil
-			m.vp.SetContent("")
+			m.syncViewport()
 			return "New session started.", nil
 		},
 		"/sessions": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {

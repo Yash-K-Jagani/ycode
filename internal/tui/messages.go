@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 	"github.com/charmbracelet/lipgloss"
@@ -24,9 +23,7 @@ func (m *Model) formatMsg(role apitypes.Role, content string) string {
 
 func (m *Model) appendSys(s string) {
 	st := lipgloss.NewStyle().Foreground(m.th.Dim).Background(sysBG).Padding(0, 1)
-	m.msgs = append(m.msgs, st.Render(s))
-	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-	m.vp.GotoBottom()
+	m.appendMsg(st.Render(s))
 }
 
 // appendFileCard renders a write/edit as a distinct card: filename on top.
@@ -44,9 +41,7 @@ func (m *Model) appendFileCard(f fileOpMsg) {
 	if f.diff != "" {
 		card += "\n" + renderDiff(f.diff)
 	}
-	m.msgs = append(m.msgs, card)
-	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-	m.vp.GotoBottom()
+	m.appendMsg(card)
 }
 
 // appendCmdCard renders a command execution on its own tinted background.
@@ -57,9 +52,7 @@ func (m *Model) appendCmdCard(c cmdOpMsg) {
 	}
 	head := cmdCardHead(c.ok).Render(fmt.Sprintf("%s %s", mark, c.tool))
 	body := cmdCardStyle().Render(c.cmd + "\n" + c.detail)
-	m.msgs = append(m.msgs, head+"\n"+body)
-	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-	m.vp.GotoBottom()
+	m.appendMsg(head + "\n" + body)
 }
 
 func (m *Model) initProject() string {

@@ -70,13 +70,12 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		m.appendSys("attachment skipped: " + miss)
 	}
 	if !o.auto {
-		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleUser, text))
-		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-		m.vp.GotoBottom()
+		m.appendMsg(m.formatMsg(apitypes.RoleUser, text))
 	}
 	m.busy = true
 	m.busySince = time.Now()
 	m.stream.Reset()
+	m.sr.reset()
 	spinCmd := m.sp.Tick
 	hist := append([]apitypes.Message(nil), m.sess.Messages...)
 	userText := text
@@ -128,12 +127,24 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		var acted []fileAct
 		written := 0
 		toolBytes := 0
-		w := progWriter{send: func(s string) {
-			written += len(s)
+		// Coalesce the model's output: a fast local model can produce dozens of
+		// writes a second, each of which would otherwise be a bubbletea message
+		// and a full transcript re-render. One update per 40ms is far more than
+		// a person can read, and it bounds the work per second however chatty
+		// the transport is. Flush is called before the turn completes, and the
+		// completed message is re-rendered in full anyway, so nothing is lost.
+		w := newCoalescingWriter(func(s string) {
 			if prog != nil {
 				prog.Send(deltaMsg(s))
 			}
-		}}
+		}, coalesceInterval)
+		countWritten := func(n int) { written += n }
+		w.onWrite = countWritten
+		// Flush on every exit path. A deferred call runs after the returned
+		// message is built but before the command's result reaches the program,
+		// so the final delta is queued ahead of the completion message and the
+		// transcript never briefly shows a truncated answer.
+		defer w.Flush()
 		onTool := func(name, args, result string, err error) {
 			toolCalls++
 			if err == nil {

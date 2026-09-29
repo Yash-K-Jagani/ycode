@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Yash-K-Jagani/ycode/internal/goal"
@@ -14,11 +13,16 @@ import (
 // incrementally.
 func (m *Model) renderAll() {
 	m.msgs = nil
+	rendered := make([]string, 0, len(m.sess.Messages))
 	for _, msg := range m.sess.Messages {
-		m.msgs = append(m.msgs, m.formatMsg(msg.Role, msg.Content))
+		rendered = append(rendered, m.formatMsg(msg.Role, msg.Content))
 	}
-	m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-	m.vp.GotoBottom()
+	// Rejoined in one pass, because the incremental form was built one message
+	// at a time and a wholesale reload is the one place that is correct.
+	m.joined.pushAll(rendered)
+	m.msgs = append(m.msgs, rendered...)
+	m.sr.reset()
+	m.syncViewport()
 }
 
 func (m Model) View() string {

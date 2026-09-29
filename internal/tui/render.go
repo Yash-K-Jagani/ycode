@@ -319,6 +319,49 @@ func renderAssistant(content string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// renderStreaming renders the part of a message that is still arriving, and is
+// deliberately not renderAssistant.
+//
+// The distinction is a performance one with a visible trade-off, and it is the
+// second half of fixing streaming. Glamour re-parses markdown and chroma
+// tokenises every code block on each call, and both cost a fraction of a
+// millisecond. Calling that once per token means an 8,000-token answer spends
+// seconds in the renderer and allocates gigabytes, all of it spent rendering
+// paragraphs that are about to be re-rendered a moment later anyway.
+//
+// So the in-flight tail is rendered cheaply - prose as plain text, code as an
+// unhighlighted panel, tool lines still as chips - and the moment a paragraph
+// boundary goes by, that text is folded into the stable prefix and rendered
+// properly, once, and never touched again.
+//
+// The trade-off: the paragraph currently being typed appears as plain text and
+// gains its styling the instant it completes. It is a visible snap, and it is
+// worth it - the alternative is a UI that falls behind the model it is
+// displaying, which is worse than a paragraph that restyles once.
+func renderStreaming(content string) string {
+	var b strings.Builder
+	for _, sg := range splitFences(content) {
+		if sg.code {
+			body, langName := splitLang(sg.text)
+			if langName != "" {
+				b.WriteString(chipStyle().Render(langName) + "\n")
+			}
+			b.WriteString(codeStyle().Render(strings.TrimRight(body, "\n")) + "\n")
+		} else if strings.TrimSpace(sg.text) != "" {
+			// No glamour: the text is incomplete, so the parse would be
+			// redone on the next token regardless.
+			for _, ln := range strings.Split(sg.text, "\n") {
+				if isToolLine(ln) {
+					b.WriteString(chipStyle().Render(strings.TrimSpace(ln)) + "\n")
+				} else if strings.TrimSpace(ln) != "" {
+					b.WriteString(ln + "\n")
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func splitLang(body string) (string, string) {
 	if i := strings.IndexByte(body, '\n'); i >= 0 {
 		if first := strings.TrimSpace(body[:i]); first != "" && !strings.ContainsAny(first, " \t\"'{") {

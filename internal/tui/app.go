@@ -48,6 +48,14 @@ type Model struct {
 	prog    *tea.Program
 	startup string
 
+	// joined is msgs pre-joined, and sr is the incremental renderer for the
+	// in-flight assistant message. Both exist because the transcript used to be
+	// rebuilt in full on every streamed token: once per delta it re-rendered the
+	// whole answer through glamour/chroma and rejoined the entire history, which
+	// is quadratic in the length of the answer. See transcript.go.
+	joined joinedTranscript
+	sr     streamRender
+
 	// side holds the sidebar's disk-backed values. The sidebar is rendered on
 	// every message, and bubbletea sends one per streamed token, so reading the
 	// todo file and the batch queue there meant two file/SQLite reads per
@@ -396,7 +404,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ta.SetWidth(msg.Width - 4)
 		if m.startup == "" {
 			m.startup = theme.Splash(m.th.Accent)
-			m.vp.SetContent(m.startup + "\n\n" + strings.Join(m.msgs, "\n\n"))
+			body := m.joined.body
+			if body == "" {
+				m.vp.SetContent(m.startup)
+			} else {
+				m.vp.SetContent(m.startup + "\n\n" + body)
+			}
 		}
 		return m, nil
 	case deltaMsg:
@@ -404,13 +417,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.stream.WriteString(string(msg))
-		preview := m.formatMsg(apitypes.RoleAssistant, m.stream.String())
-		base := strings.Join(m.msgs, "\n\n")
-		if base != "" {
-			base += "\n\n"
-		}
-		m.vp.SetContent(base + preview)
-		m.vp.GotoBottom()
+		// Two renderers on purpose: the part of the answer that is already
+		// final is rendered once and cached, and the paragraph still arriving
+		// is rendered cheaply on every token. The history is not rejoined
+		// either. Previously this re-rendered the whole answer through
+		// glamour/chroma and rejoined every message, once per token.
+		preview := m.sr.update(m.stream.String(), renderAssistant, renderStreaming)
+		m.syncViewport(preview)
 		return m, nil
 	case toolMsg:
 		if m.cancelled {
@@ -437,8 +450,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case resetStreamMsg:
 		m.stream.Reset()
-		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-		m.vp.GotoBottom()
+		m.sr.reset()
+		m.syncViewport()
 		return m, nil
 	case doneMsg:
 		m.busy = false
@@ -450,8 +463,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = false
 			m.stopGoalRun()
 			m.stream.Reset()
-			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-			m.vp.GotoBottom()
+			m.sr.reset()
+			m.syncViewport()
 			m.noteGoalStop()
 			return m, nil
 		}
@@ -461,10 +474,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
-		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))
+		// The turn's final render is done from scratch, so the incremental
+		// render used while it streamed cannot leave a stale tail behind.
+		m.appendMsg(m.formatMsg(apitypes.RoleAssistant, msg.text))
 		m.stream.Reset()
-		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-		m.vp.GotoBottom()
+		m.sr.reset()
 		m.sessPTok += msg.ptok
 		m.sessCTok += msg.ctok
 		m.sessUSD += msg.usd
@@ -495,8 +509,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stopGoalRun()
 			m.noteGoalStop()
 			m.stream.Reset()
-			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-			m.vp.GotoBottom()
+			m.sr.reset()
+			m.syncViewport()
 			return m, nil
 		}
 		m.stream.Reset()
@@ -527,16 +541,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cancelled {
 			m.cancelled = false
 			m.stream.Reset()
-			m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-			m.vp.GotoBottom()
+			m.sr.reset()
+			m.syncViewport()
 			return m, nil
 		}
 		m.stream.Reset()
+		m.sr.reset()
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleAssistant, Content: msg.text})
 		_ = m.sess.Save()
-		m.msgs = append(m.msgs, m.formatMsg(apitypes.RoleAssistant, msg.text))
-		m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-		m.vp.GotoBottom()
+		m.appendMsg(m.formatMsg(apitypes.RoleAssistant, msg.text))
 		m.appendSys(m.postReview(msg.text, msg.repo, msg.pr))
 		return m, nil
 	case modelSwitchedMsg:
@@ -692,8 +705,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.turnCancel = nil
 				}
 				m.stream.Reset()
-				m.vp.SetContent(strings.Join(m.msgs, "\n\n"))
-				m.vp.GotoBottom()
+				m.sr.reset()
+				m.syncViewport()
 				if g := m.goal; g != nil && g.Running() {
 					m.appendSys("(stopped — the goal run is cancelled with it; Esc again to quit)")
 				} else {
@@ -707,10 +720,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+n":
 			m.sess = sessions.New(m.cfg.ActiveProvider, m.cfg.ActiveModel)
 			_ = m.sess.Save()
-			m.msgs = nil
+			m.clearMsgs()
 			m.pendingPlan = ""
 			m.goal = nil
-			m.vp.SetContent("")
 			m.appendSys("New session started.")
 			return m, nil
 		case "ctrl+o":

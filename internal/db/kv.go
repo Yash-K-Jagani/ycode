@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
@@ -21,8 +23,14 @@ func Shared() *sql.DB {
 	defer sharedMu.Unlock()
 	if sharedDB == nil && !sharedOK {
 		sharedOK = true
-		conn, err := Open(filepath.Join(config.Dir(), "ycode.db"))
+		path := filepath.Join(config.Dir(), "ycode.db")
+		conn, err := Open(path)
 		if err != nil {
+			// Reported once, then never retried. Callers degrade to their JSON
+			// files, which looks exactly like working - slower, and with no
+			// history across versions - so a permissions problem or a full
+			// disk has to say so here or nowhere.
+			fmt.Fprintf(os.Stderr, "ycode: cannot open %s (%v); falling back to JSON files for storage\n", path, err)
 			return nil
 		}
 		sharedDB = conn

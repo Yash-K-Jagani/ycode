@@ -490,7 +490,7 @@ Measured on Windows/amd64, Go 1.27.1, 13th-gen Core i5-13420H, `-benchtime=200x`
 | Registered tools | 29 built-ins |
 | Slash commands | 31 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 134 |
+| Commits | 136 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a
@@ -664,6 +664,30 @@ a terminal stays usable.
   Worth stating plainly, because it invalidates a habit: a green run is evidence
   only for the scenarios that run. This test has been reporting on a scenario
   that never executed here, and would have kept doing so.
+
+- **Three more of the same, found by auditing for the pattern.** Four tests in
+  `internal/tools` shelled out using POSIX `1>&2`, which PowerShell cannot parse.
+  All four passed locally while executing nothing, and the reason generalises:
+  PowerShell's `ParserError` *quotes the line it failed to parse*, so an
+  assertion for `"out"` and `"err"` was satisfied by the text `printf out; printf
+  err`, an assertion for `"done"` by `printf done`, and a check for "the sink was
+  called" by the error text landing on stderr — from a single goroutine, so it
+  never contended.
+
+  One of them was the deadlock test above. Another was the only guard on the
+  stdout/stderr emit mutex, and deleting that mutex would still have passed here.
+
+  The real fix was not the platform syntax, it was that none of them checked
+  whether the command succeeded. A test that asserts only on captured output can
+  be satisfied by output that describes the failure. They now assert `res.err`
+  first, which makes the whole class unrepresentable rather than merely absent
+  today. Reintroducing the truncation bug was used to confirm they fail when they
+  should — a test that cannot fail is not evidence, and one of the new benchmarks
+  in this work initially was.
+
+  **The check that found them is cheap and general:** for any test that shells
+  out, run the script by hand on the failing platform first and see whether it
+  produces what it claims. Four of them here did not.
 - **One known gap in redaction**, found by benchmarking rather than by reading the
   patterns: every assignment rule requires the keyword at the *end* of the name, so
   `db_secret_value=...` and `api_secret_value=...` are not redacted. Recorded in a

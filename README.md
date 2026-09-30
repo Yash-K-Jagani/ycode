@@ -482,15 +482,15 @@ Measured on Windows/amd64, Go 1.27.1, 13th-gen Core i5-13420H, `-benchtime=200x`
 | Metric | Value |
 | --- | --- |
 | Packages | 49 (45 with tests) |
-| Go source | 22,908 lines across 138 files |
-| Go tests | 21,238 lines across 139 files |
-| Test functions | 827 |
-| Benchmarks | 51 |
+| Go source | 22,979 lines across 139 files |
+| Go tests | 21,449 lines across 140 files |
+| Test functions | 830 |
+| Benchmarks | 56 |
 | Test-to-source ratio | 0.93 |
 | Registered tools | 29 built-ins |
 | Slash commands | 31 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 132 |
+| Commits | 134 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a
@@ -512,6 +512,8 @@ a scripted provider and a local server:
 | Provider call, warm cache | 3.9 µs | 112 B |
 | Provider call, first (cold cache) | 91 µs | 4.1 KB, 45 allocs |
 | Usage accounting, per provider attempt | 53 ns | 0 B |
+| Ollama, 200-token answer (NDJSON) | 3.7 ms | 489 KB, 6.2k allocs |
+| Tool schemas, 30-tool registry, per request | 32 µs | 21.9 KB, 212 allocs |
 
 Microseconds against a model call measured in hundreds of milliseconds. The
 harness is not where a turn's latency goes, and these are the numbers that would
@@ -522,6 +524,13 @@ warm. That ratio is the whole argument for the cache: it is what stopped every
 turn paying a fresh TCP connect and TLS handshake to a host it had just been
 talking to. The router's usage ledger costs 53 ns per attempt, so what the daily
 budget reads is effectively free.
+
+**Ollama is the more expensive streaming path**, and the reason is structural
+rather than incidental: it emits one JSON object per token, so its cost is
+genuinely per-token where SSE is per-event no matter how many tokens arrive in a
+frame. About 1.7 µs to decode a line, ~18 µs per token across a 200-token answer.
+Not a problem against a local model, but it is the number that would move first
+if streaming ever felt sluggish.
 
 ### Measured speedups
 
@@ -630,6 +639,10 @@ a terminal stays usable.
   a year. Fine per turn, but it is the one unbounded thing in the cost path, and
   `/different` calls it five times for one user action. Fixing it is a storage
   strategy change rather than a tidy, so it is measured and left alone.
+- **Tool schemas are rebuilt per request.** `toolParams` costs 32 µs and 21.9 KB
+  of garbage for the 30-tool default registry, on every request. Caching it means
+  deciding when a spec list has changed, which is a cache-invalidation problem
+  bought for 32 µs against a network call — so it is measured, not optimised.
 - **A test that passed locally for an accidental reason.** CI failed
   `TestExecStreamDoesNotDeadlockOnLargeStderr` on every run while it passed on
   this machine, and it was recorded here as a load-sensitive flake. It was not a

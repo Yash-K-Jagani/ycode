@@ -364,12 +364,12 @@ func slashRegistry() map[string]slashHandler {
 			// plan.md promised this from the start; what existed was an audit log
 			// that records that a turn happened and nothing about what was in it.
 			a := strings.TrimSpace(args)
-			switch {
-			case a == "clear":
+			switch a {
+			case "clear":
 				n := m.tracer.Count()
 				m.tracer.Reset()
 				return fmt.Sprintf("cleared %d trace record(s)", n), nil
-			case a == "list":
+			case "list":
 				if m.tracer.Count() == 0 {
 					return "no trace recorded yet", nil
 				}

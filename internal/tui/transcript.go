@@ -393,10 +393,10 @@ func (m *Model) scrollKey(msg tea.KeyMsg) bool {
 	// shift+arrow cannot even be represented, let alone tested. Terminals that
 	// do send it as alt+arrow anyway.
 	case "alt+up":
-		m.vp.LineUp(1)
+		m.vp.ScrollUp(1)
 		return true
 	case "alt+down":
-		m.vp.LineDown(1)
+		m.vp.ScrollDown(1)
 		return true
 	case "ctrl+up":
 		m.vp.HalfPageUp()

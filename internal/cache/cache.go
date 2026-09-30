@@ -151,14 +151,6 @@ func (c *Cache) persistFile() {
 	_ = os.WriteFile(c.file, data, 0o644)
 }
 
-func (c *Cache) persist() {
-	if c.conn != nil {
-		c.persistSQL()
-		return
-	}
-	c.persistFile()
-}
-
 func NewAt(path string, embedFn func(ctx context.Context, inputs []string) ([][]float64, error)) *Cache {
 	c := &Cache{file: path, embed: embedFn}
 	data, _ := os.ReadFile(c.file)

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -96,20 +97,42 @@ func TestCoalescingWriterNeverWithholdsPastTheInterval(t *testing.T) {
 	cw := newCoalescingWriter(func(s string) { got = append(got, s) }, 40*time.Millisecond)
 	cw.now = clock.now
 
-	cw.Write([]byte("a"))
-	cw.Write([]byte("b")) // buffered
+	// A coalescing writer never fails, so the count is noise here. Checked
+	// anyway so a future change that made Write return an error would not pass
+	// this test by accident.
+	mustWrite := func(s string) {
+		t.Helper()
+		if n, err := cw.Write([]byte(s)); err != nil || n != len(s) {
+			t.Fatalf("Write(%q) = %d, %v", s, n, err)
+		}
+	}
+	mustWrite("a")
+	mustWrite("b") // buffered
 	clock.advance(39 * time.Millisecond)
-	cw.Write([]byte("c")) // still within the interval
+	mustWrite("c") // still within the interval
 	if len(got) != 1 {
 		t.Fatalf("forwarded before the interval elapsed: %v", got)
 	}
 	clock.advance(2 * time.Millisecond)
-	cw.Write([]byte("d")) // now due
+	mustWrite("d") // now due
 	if len(got) != 2 {
 		t.Fatalf("expected a second update once the interval passed, got %v", got)
 	}
 	if got[1] != "bcd" {
 		t.Fatalf("buffered text = %q, want %q", got[1], "bcd")
+	}
+}
+
+// checkWrites asserts the writer consumed everything, which a coalescing writer
+// always does. Used instead of bare cw.Write calls so errcheck is satisfied and
+// a future change that made Write fail would fail here rather than silently
+// making the timing assertions below meaningless.
+func checkWrites(t *testing.T, cw io.Writer, chunks ...string) {
+	t.Helper()
+	for _, c := range chunks {
+		if n, err := cw.Write([]byte(c)); err != nil || n != len(c) {
+			t.Fatalf("Write(%q) = %d, %v", c, n, err)
+		}
 	}
 }
 
@@ -121,9 +144,7 @@ func TestCoalescingWriterFlushEmitsTail(t *testing.T) {
 	cw := newCoalescingWriter(func(s string) { got = append(got, s) }, 40*time.Millisecond)
 	cw.now = clock.now
 
-	cw.Write([]byte("start"))
-	cw.Write([]byte(" middle"))
-	cw.Write([]byte(" end"))
+	checkWrites(t, cw, "start", " middle", " end")
 	cw.Flush()
 	if strings.Join(got, "") != "start middle end" {
 		t.Fatalf("got %q", strings.Join(got, ""))
@@ -148,7 +169,7 @@ func TestCoalescingWriterCountsAllBytes(t *testing.T) {
 	cw.onWrite = func(n int) { total += n }
 
 	for i := 0; i < 50; i++ {
-		cw.Write([]byte("abcd"))
+		checkWrites(t, cw, "abcd")
 	}
 	if total != 200 {
 		t.Fatalf("counted %d bytes, want 200", total)
@@ -166,7 +187,7 @@ func TestCoalescingWriterReportsFullLength(t *testing.T) {
 	clock := newFakeClock()
 	cw := newCoalescingWriter(func(string) {}, time.Hour)
 	cw.now = clock.now
-	cw.Write([]byte("first"))
+	checkWrites(t, cw, "first")
 	n, err := cw.Write([]byte("second"))
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -198,7 +219,7 @@ func TestCoalescingWriterConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < perWriter; j++ {
-				cw.Write([]byte("y"))
+				checkWrites(t, cw, "y")
 			}
 		}()
 	}
@@ -226,7 +247,7 @@ func TestCoalescingWriterNilSendIsSafe(t *testing.T) {
 	clock := newFakeClock()
 	cw := newCoalescingWriter(nil, time.Hour)
 	cw.now = clock.now
-	cw.Write([]byte("text"))
+	checkWrites(t, cw, string([]byte("text")))
 	cw.Flush()
 }
 
@@ -238,12 +259,12 @@ func TestCoalescingWriterEmptyWrites(t *testing.T) {
 	cw := newCoalescingWriter(func(s string) { got = append(got, s) }, 0)
 	cw.now = clock.now
 	for i := 0; i < 10; i++ {
-		cw.Write(nil)
+		checkWrites(t, cw, "")
 	}
 	if len(got) != 0 {
 		t.Fatalf("empty writes produced updates: %v", got)
 	}
-	cw.Write([]byte("real"))
+	checkWrites(t, cw, string([]byte("real")))
 	if len(got) != 1 || got[0] != "real" {
 		t.Fatalf("got %v", got)
 	}
@@ -263,7 +284,10 @@ func BenchmarkCoalescingWriter(b *testing.B) {
 			cw := newCoalescingWriter(func(string) {}, tc.interval)
 			buf := []byte("token")
 			for i := 0; i < b.N; i++ {
-				cw.Write(buf)
+				// Discarded rather than asserted: this measures the write path,
+				// and a coalescing writer never errors. The functional tests cover
+				// that separately, where a failure has somewhere to be reported.
+				_, _ = cw.Write(buf)
 			}
 			cw.Flush()
 		})

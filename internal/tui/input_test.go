@@ -16,13 +16,13 @@ func inputModel(t *testing.T) Model {
 
 func typeString(m *Model, s string) {
 	for _, r := range s {
-		updated, _ := (&*m).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		*m = *(updated.(*Model))
 	}
 }
 
 func press(m *Model, k tea.KeyMsg) {
-	updated, _ := (&*m).Update(k)
+	updated, _ := m.Update(k)
 	*m = *(updated.(*Model))
 }
 

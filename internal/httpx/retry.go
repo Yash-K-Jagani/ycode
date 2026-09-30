@@ -96,11 +96,6 @@ func retryAfter(resp *http.Response) (time.Duration, bool) {
 	return 0, false
 }
 
-// maxRetryAfter caps how long we will sit on a Retry-After. A provider asking
-// for an hour is not going to recover inside one turn, and blocking the user
-// for that long is worse than falling back to another provider.
-const maxRetryAfter = 20 * time.Second
-
 // RetryConfig bounds a retry sequence.
 type RetryConfig struct {
 	// Attempts is the total number of tries, including the first. 1 disables
@@ -111,6 +106,11 @@ type RetryConfig struct {
 	// together do not all come back together and trip it again.
 	Base time.Duration
 	// Max caps any single delay, including one from Retry-After.
+	//
+	// That cap is the whole reason a Retry-After is safe to honour at all. A
+	// provider asking for an hour is not going to recover inside one turn, and
+	// blocking the user for that long is worse than falling back to another
+	// provider - so the request is given up on rather than waited out.
 	Max time.Duration
 }
 

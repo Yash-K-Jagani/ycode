@@ -18,7 +18,6 @@ type toolProvider struct {
 	// text is what it streams alongside the calls, if anything.
 	text string
 
-	specs    []apitypes.ToolSpec
 	sawSpecs []apitypes.ToolSpec
 	rounds   int
 	lastMsgs []apitypes.Message

@@ -92,7 +92,7 @@ func TestCompletionDropsTheLiveBlock(t *testing.T) {
 	m := &Model{}
 	m.Update(toolChunkMsg{tool: "bash", chunk: "compiling foo\n"})
 	m.Update(toolMsg{name: "bash", status: "ok (2 bytes)", out: "compiling foo\ndone"})
-	if m.liveTool != "" || m.liveBuf != nil && len(m.liveBuf) != 0 {
+	if m.liveTool != "" || len(m.liveBuf) != 0 {
 		t.Fatal("the provisional block survived completion")
 	}
 	if m.livePreview() != "" {
@@ -276,7 +276,7 @@ func TestGateBoundsWhatItHolds(t *testing.T) {
 // rather than a nil dereference, because every caller that has no program still
 // has to construct one.
 func TestGateWithoutAProgramIsHarmless(t *testing.T) {
-	var g *chunkGate = newChunkGate(nil)
+	g := newChunkGate(nil)
 	if g != nil {
 		t.Fatal("a gate was built for a nil program")
 	}

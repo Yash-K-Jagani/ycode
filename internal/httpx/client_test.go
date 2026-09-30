@@ -60,9 +60,15 @@ func TestClientDefaultsTimeout(t *testing.T) {
 }
 
 func TestSharedTransportIsReused(t *testing.T) {
-	// Two clients built independently must still share a pool, or the
-	// per-construction cost comes straight back.
-	if Shared() != Shared() {
+	// Two calls must return the same transport, or the per-construction cost
+	// comes straight back. Compared through variables rather than as
+	// Shared() != Shared(), which reads as a tautology even though two calls are
+	// made - and which a linter is right to flag.
+	first, second := Shared(), Shared()
+	if first == nil {
+		t.Fatal("Shared returned no transport")
+	}
+	if first != second {
 		t.Fatal("Shared returned different transports")
 	}
 	if Client(time.Second).Transport != StreamClient().Transport {
@@ -123,7 +129,7 @@ func TestWatchIdleLeavesAHealthyStreamAlone(t *testing.T) {
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r, w := WatchIdle(cancel, pr, 2*time.Second)
-	defer pw.Close()
+	defer func() { _ = pw.Close() }()
 	defer w.Close()
 
 	go func() {
@@ -149,7 +155,7 @@ func TestWatchIdleLeavesAHealthyStreamAlone(t *testing.T) {
 
 func TestWatchIdleDisabledByZero(t *testing.T) {
 	pr, pw := io.Pipe()
-	defer pw.Close()
+	defer func() { _ = pw.Close() }()
 	called := false
 	r, w := WatchIdle(func() { called = true }, pr, 0)
 	if r != io.Reader(pr) {
@@ -167,7 +173,7 @@ func TestWatchIdleDisabledByZero(t *testing.T) {
 
 func TestStreamWatchCloseIsIdempotent(t *testing.T) {
 	pr, pw := io.Pipe()
-	defer pw.Close()
+	defer func() { _ = pw.Close() }()
 	_, w := WatchIdle(func() {}, pr, time.Minute)
 	w.Close()
 	w.Close()
@@ -441,7 +447,9 @@ func TestTransportErrorOnCancelledContextIsNotRetried(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	calls := 0
-	doRetry(ctx, RetryConfig{Attempts: 3, Base: time.Millisecond, Max: time.Millisecond},
+	// The error is discarded deliberately: this test is about how many attempts
+	// were made, not about what came back.
+	_, _ = doRetry(ctx, RetryConfig{Attempts: 3, Base: time.Millisecond, Max: time.Millisecond},
 		func() (*http.Response, error) {
 			calls++
 			return nil, context.Canceled

@@ -15,9 +15,8 @@ import (
 // streamTool emits output in pieces while it runs, like the real bash, run,
 // testgen and notebook tools do.
 type streamTool struct {
-	mu      sync.Mutex
-	chunks  []string
-	emitErr bool
+	mu     sync.Mutex
+	chunks []string
 }
 
 func (s *streamTool) Name() string        { return "streamer" }
@@ -57,8 +56,6 @@ func (q *quietTool) Run(ctx context.Context, args json.RawMessage) (string, erro
 	q.ran = true
 	return "quiet output", nil
 }
-
-func streamRegistry(t *tools.Registry) { t.Add(&streamTool{}) }
 
 func msgs() []apitypes.Message {
 	return []apitypes.Message{{Role: apitypes.RoleUser, Content: "hi"}}

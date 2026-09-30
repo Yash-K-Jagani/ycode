@@ -63,13 +63,6 @@ func trimReference(msgs []apitypes.Message, budget int) ([]apitypes.Message, int
 	return out, len(rest) - len(kept)
 }
 
-func sameMessages(t *testing.T, label string, a, b []apitypes.Message) {
-	t.Helper()
-	if !equalMessages(a, b) {
-		t.Fatalf("%s: messages differ\n a=%s\n b=%s", label, summarise(a), summarise(b))
-	}
-}
-
 func equalMessages(a, b []apitypes.Message) bool {
 	if len(a) != len(b) {
 		return false

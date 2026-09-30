@@ -630,19 +630,27 @@ a terminal stays usable.
   a year. Fine per turn, but it is the one unbounded thing in the cost path, and
   `/different` calls it five times for one user action. Fixing it is a storage
   strategy change rather than a tidy, so it is measured and left alone.
-- **A truncation bug this suite caught, and a note on how it got here.**
-  `TestExecStreamDoesNotDeadlockOnLargeStderr` failed on CI while passing
-  locally, which looked like a load-sensitive flake and was recorded as one here.
-  It was not a flake: the test failed on CI every single run, and passed on this
-  machine only because Windows' `shellCmd` never produced the stderr flood at all.
-  A local pass was never evidence of anything.
-  The bug it found was real: once the retained-output buffer filled, `execStream`
-  stopped accepting output, so a command that printed a megabyte of build noise
-  and then failed kept the noise and discarded the failure — the one line that
-  said what went wrong. Retention now keeps the tail. The test that should have
-  caught this locally cannot, which is the actual lesson: it asserts on
-  `shellCmd`, which is a no-op on Windows, so on this machine it can only ever
-  pass.
+- **A test that passed locally for an accidental reason.** CI failed
+  `TestExecStreamDoesNotDeadlockOnLargeStderr` on every run while it passed on
+  this machine, and it was recorded here as a load-sensitive flake. It was not a
+  flake, and the local pass was meaningless.
+
+  The bug was real. Once the retained-output buffer filled, `execStream` stopped
+  accepting output, so a command that printed a megabyte of build noise and then
+  failed kept the noise and discarded the failure — the one line that said what
+  went wrong. Retention now keeps the tail.
+
+  The local pass came from `shellCmd`, which runs `sh -c` on Unix and
+  `powershell -Command` here. PowerShell cannot parse the test's `1>&2`
+  redirection and raises a `ParserError` without executing anything, so the
+  stderr flood never happened. The test then asserts that stdout contains
+  `done`, and PowerShell's diagnostic quotes the line it failed to parse —
+  which contains `printf done`. The assertion matched a substring of the error
+  message and passed.
+
+  Worth stating plainly, because it invalidates a habit: a green run is evidence
+  only for the scenarios that run. This test has been reporting on a scenario
+  that never executed here, and would have kept doing so.
 - **One known gap in redaction**, found by benchmarking rather than by reading the
   patterns: every assignment rule requires the keyword at the *end* of the name, so
   `db_secret_value=...` and `api_secret_value=...` are not redacted. Recorded in a

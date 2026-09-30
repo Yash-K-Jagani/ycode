@@ -1,6 +1,10 @@
 package tools
 
-import "time"
+import (
+	"time"
+
+	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
+)
 
 // The tool catalog.
 //
@@ -133,6 +137,42 @@ var catalogByName = func() map[string]*entry {
 
 // entryFor returns the catalog row for a built-in tool, or nil.
 func entryFor(name string) *entry { return catalogByName[name] }
+
+// Specs projects the allowed tools into the wire form a provider that supports
+// native tool calling needs.
+//
+// It is a projection, not a conversion: the Tool interface is unchanged and
+// nothing here affects execution. That is deliberate - a tool gaining streaming
+// or subagent delegation should not require anything a provider has to
+// understand to change.
+//
+// Only allowed tools are offered. Sending the full catalogue when the mode
+// forbids writes invites a call that gets refused, which wastes a round trip
+// and teaches the model that refusals happen.
+func (r *Registry) Specs(allowed []string) []apitypes.ToolSpec {
+	out := make([]apitypes.ToolSpec, 0, len(allowed))
+	for _, n := range allowed {
+		t, ok := r.Get(n)
+		if !ok {
+			// A name in the allow-list with no tool behind it. Offering a spec
+			// would produce a call that fails as "unknown tool", a worse message
+			// than not offering it.
+			continue
+		}
+		out = append(out, apitypes.ToolSpec{
+			Name:        n,
+			Description: t.Description(),
+			Schema:      t.Schema(),
+		})
+	}
+	// Nil rather than empty, because providers distinguish them: several reject
+	// an empty "tools" array outright, and sending one would mean supporting
+	// tool calling broke every request from a user with no tools enabled.
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
 
 // ToolNames lists the built-in tools in catalog order.
 func ToolNames() []string {

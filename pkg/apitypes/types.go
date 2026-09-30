@@ -96,6 +96,16 @@ type Message struct {
 	// Parts is populated only when the message carries something Content
 	// cannot express. Text-only messages leave it nil.
 	Parts []Part `json:"parts,omitempty"`
+
+	// ToolCallID and Name are set only on a RoleTool message, correlating a
+	// result with the call the model asked for. Providers that speak native tool
+	// calling require the id echoed back and reject the conversation without it,
+	// so it cannot live in Content or in a part.
+	//
+	// Both are omitempty, which is what keeps the wire format stable: a
+	// text-only message still marshals to exactly {"role":...,"content":...}.
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
 }
 
 // messageWire is the on-the-wire shape. It is the historical one exactly:
@@ -103,13 +113,21 @@ type Message struct {
 // know about parts still decode a text-only message correctly, and a rich
 // message degrades to its text rather than becoming unparseable.
 type messageWire struct {
-	Role  Role   `json:"role"`
-	Text  string `json:"content"`
-	Parts []Part `json:"parts,omitempty"`
+	Role       Role   `json:"role"`
+	Text       string `json:"content"`
+	Parts      []Part `json:"parts,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Name       string `json:"name,omitempty"`
 }
 
 func (m Message) MarshalJSON() ([]byte, error) {
-	return json.Marshal(messageWire{Role: m.Role, Text: m.Content, Parts: m.Parts})
+	return json.Marshal(messageWire{
+		Role:       m.Role,
+		Text:       m.Content,
+		Parts:      m.Parts,
+		ToolCallID: m.ToolCallID,
+		Name:       m.Name,
+	})
 }
 
 // UnmarshalJSON accepts both shapes and re-establishes the invariant: whatever

@@ -330,6 +330,29 @@ retries, repeat-guard with cached results, 6-round cap in plan, 8 in build, 16
 in goal). Small local models
 work; 3b+ coders follow instructions far better than 1–2b ones.
 
+**Native tool calling.** When the provider supports it and the mode has tools,
+ycode sends the tool schemas in the request and takes the model's calls back as
+structured data, instead of asking it to write a `<tool:...>` tag into prose. The
+schemas move out of the system prompt where they were being reproduced from
+memory, and long arguments stop being truncated or hallucinated — which is where
+small models lose tool calls most often.
+
+It is chosen at runtime by capability, not by config: Gemini follows schemas
+natively, some OpenAI-compatible servers do not, and Ollama's support depends on
+the model. Anything that does not support it uses the text protocol, so nothing
+is lost by a provider not implementing it. A tool-less turn (chat mode) sends no
+schemas at all — offering tools the model was never going to call just spends
+prompt tokens on every message.
+
+Two details are easy to get wrong and are covered by tests:
+
+- A native turn whose prose *mentions* a `<tool:...>` tag must not execute it as
+  well. Models do both in one message, so the two protocols are kept exclusive
+  per turn: a provider reporting calls means tags are not parsed.
+- The assistant's calls must be carried into the next request with the same ids.
+  Without them the results refer to nothing, and the provider either rejects the
+  conversation or assumes the tools ran themselves.
+
 ---
 
 ## 10. RAG, cache & router intelligence
@@ -403,15 +426,15 @@ are both given — a speedup with only the "after" is marketing.
 | Metric | Value |
 | --- | --- |
 | Packages | 47 |
-| Go source | 20,746 lines across 128 files |
-| Go tests | 18,189 lines across 124 files |
-| Test functions | 712 |
+| Go source | 21,144 lines across 129 files |
+| Go tests | 18,882 lines across 126 files |
+| Test functions | 742 |
 | Benchmarks | 16 |
-| Test-to-source ratio | 0.88 |
+| Test-to-source ratio | 0.89 |
 | Registered tools | 28 built-ins |
 | Slash commands | 29 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 119 |
+| Commits | 121 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -254,31 +256,76 @@ func equal(a, b []string) bool {
 
 // A real command, because the point of the change is that output appears while
 // the process is still running.
+//
+// This used to assert the command took at least 400ms, which measured the OS's
+// sleep rather than anything about ycode - CI failed it at 356ms, on a runner
+// whose `sleep 0.4` simply returned early. The assertion was also redundant:
+// execStream cannot have delivered "b" without having run the command at all.
+//
+// What it should ask is whether output arrives *while* the process is alive, and
+// that can be arranged rather than timed. The command writes "a" and then waits
+// for a file to appear before writing "b"; the sink creates that file the moment
+// it sees "a". If output were buffered until exit, the command would wait for a
+// file nothing creates, and the test times out with a message that says so - no
+// dependency on how long any sleep actually slept.
 func TestExecStreamEmitsBeforeFinish(t *testing.T) {
-	cmd := shellCmd(`printf "a"; sleep 0.4; printf "b"`)
+	marker := filepath.Join(t.TempDir(), "release")
+	var cmd *exec.Cmd
+	if isWindows() {
+		cmd = shellCmd(fmt.Sprintf(
+			`[Console]::Out.Write('a'); while (-not (Test-Path '%s')) { Start-Sleep -Milliseconds 10 }; [Console]::Out.Write('b')`,
+			marker))
+	} else {
+		cmd = shellCmd(fmt.Sprintf(
+			`printf 'a'; while [ ! -f '%s' ]; do sleep 0.01; done; printf 'b'`, marker))
+	}
+
 	var mu sync.Mutex
 	var chunks []string
-	start := time.Now()
-	res := execStream(context.Background(), cmd, func(s string) {
+	released := false
+	release := func() {
 		mu.Lock()
-		chunks = append(chunks, s)
+		defer mu.Unlock()
+		if released {
+			return
+		}
+		released = true
+		_ = os.WriteFile(marker, nil, 0o644)
+	}
+	// If the assertion below ever fails, the command is left spinning on the
+	// marker; release it so the test does not leak a busy process.
+	t.Cleanup(release)
+
+	done := make(chan streamResult, 1)
+	go func() {
+		done <- execStream(context.Background(), cmd, func(s string) {
+			mu.Lock()
+			chunks = append(chunks, s)
+			mu.Unlock()
+			if strings.Contains(s, "a") {
+				release()
+			}
+		}, maxOutBytes)
+	}()
+
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("err: %v", res.err)
+		}
+		mu.Lock()
+		n := len(chunks)
+		got := append([]string(nil), chunks...)
 		mu.Unlock()
-	}, maxOutBytes)
-	elapsed := time.Since(start)
-	mu.Lock()
-	n := len(chunks)
-	mu.Unlock()
-	if n < 2 {
-		t.Fatalf("expected incremental chunks, got %d", n)
-	}
-	if elapsed < 400*time.Millisecond {
-		t.Fatalf("command finished suspiciously fast (%v), so output was not really live", elapsed)
-	}
-	if string(res.out) != "ab" {
-		t.Fatalf("combined output = %q, want %q", res.out, "ab")
-	}
-	if res.err != nil {
-		t.Fatalf("err: %v", res.err)
+		if n < 2 {
+			t.Fatalf("expected incremental chunks, got %d (%q)", n, got)
+		}
+		if string(res.out) != "ab" {
+			t.Fatalf("combined output = %q, want %q", res.out, "ab")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("command never finished: it was waiting for output that only arrived at exit, " +
+			"so the sink was never called while the process was running")
 	}
 }
 

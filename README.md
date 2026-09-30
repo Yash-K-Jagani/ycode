@@ -630,12 +630,19 @@ a terminal stays usable.
   a year. Fine per turn, but it is the one unbounded thing in the cost path, and
   `/different` calls it five times for one user action. Fixing it is a storage
   strategy change rather than a tidy, so it is measured and left alone.
-- **One known flaky test**, seen once: `TestExecStreamDoesNotDeadlockOnLargeStderr`
-  in `internal/tools` took 156s under full-suite load and passed in 0.59s
-  standalone and in the next full run. It spawns a Unix shell pipeline on
-  Windows, so it is sensitive to machine load rather than to anything in the
-  code. It is called out here rather than left to be rediscovered as a random red
-  build.
+- **A truncation bug this suite caught, and a note on how it got here.**
+  `TestExecStreamDoesNotDeadlockOnLargeStderr` failed on CI while passing
+  locally, which looked like a load-sensitive flake and was recorded as one here.
+  It was not a flake: the test failed on CI every single run, and passed on this
+  machine only because Windows' `shellCmd` never produced the stderr flood at all.
+  A local pass was never evidence of anything.
+  The bug it found was real: once the retained-output buffer filled, `execStream`
+  stopped accepting output, so a command that printed a megabyte of build noise
+  and then failed kept the noise and discarded the failure — the one line that
+  said what went wrong. Retention now keeps the tail. The test that should have
+  caught this locally cannot, which is the actual lesson: it asserts on
+  `shellCmd`, which is a no-op on Windows, so on this machine it can only ever
+  pass.
 - **One known gap in redaction**, found by benchmarking rather than by reading the
   patterns: every assignment rule requires the keyword at the *end* of the name, so
   `db_secret_value=...` and `api_secret_value=...` are not redacted. Recorded in a

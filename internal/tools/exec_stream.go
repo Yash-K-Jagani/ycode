@@ -41,6 +41,15 @@ import (
 // passed, closing the pipes from our side. Any output already read is kept.
 const waitDelay = 2 * time.Second
 
+// truncMarker goes at the front of truncated output, because the front is where
+// the data was dropped.
+//
+// It used to go at the end, which put it exactly where the command's final
+// output should have been - so a truncated result read as though the command had
+// finished there. That is the worst place to put a note saying something was
+// discarded.
+const truncMarker = "…(truncated)\n"
+
 // streamResult is what execStream collects while the command runs.
 type streamResult struct {
 	// out is the full combined output, capped at maxOutBytes.
@@ -110,16 +119,25 @@ func execStream(ctx context.Context, cmd *exec.Cmd, emit func(string), maxOut in
 	appendChunk := func(p []byte) {
 		mu.Lock()
 		defer mu.Unlock()
-		if buf.Len() >= maxOut {
-			full = true
-			return
-		}
-		n := maxOut - buf.Len()
-		if n > len(p) {
-			n = len(p)
-		}
-		buf.Write(p[:n])
-		if buf.Len() >= maxOut {
+		buf.Write(p)
+		if buf.Len() > maxOut {
+			// The tail is kept, not the head.
+			//
+			// This used to stop accepting output once the buffer was full, which
+			// meant a command that printed a megabyte of build noise and then
+			// failed kept the noise and lost the failure. The diagnostic that
+			// tells you what went wrong is at the end; the first few kilobytes of
+			// "Compiling foo v0.1.0" are the part nobody reads.
+			//
+			// It also made the truncation marker misleading: it was appended at
+			// the end, in the position where the interesting content should have
+			// been, so a truncated result read as if the command had finished
+			// there.
+			//
+			// Buffer.Next is O(1) and advances the read offset, so this is a
+			// sliding window rather than a copy: once the buffer is at maxOut the
+			// backing array stops growing.
+			buf.Next(buf.Len() - maxOut)
 			full = true
 		}
 	}
@@ -175,7 +193,14 @@ func execStream(ctx context.Context, cmd *exec.Cmd, emit func(string), maxOut in
 	wasFull := full
 	mu.Unlock()
 	if wasFull {
-		out = append(out, []byte("\n…(truncated)")...)
+		// The marker is counted inside the cap, not added on top. A caller
+		// bounding what reaches the model's context cares about the total, and
+		// "at most maxOut, plus a bit" is not a bound anyone can rely on.
+		marker := truncMarker
+		if len(out) > maxOut-len(marker) {
+			out = out[len(out)-(maxOut-len(marker)):]
+		}
+		out = append([]byte(marker), out...)
 	}
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	// ErrWaitDelay means "we stopped waiting for the pipes", not "the command

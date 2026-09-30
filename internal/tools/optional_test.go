@@ -319,12 +319,44 @@ func TestExecStreamTruncatesRetainedOutput(t *testing.T) {
 		t.Skip("no shell")
 	}
 	res := execStream(context.Background(), cmd, nil, 1024)
-	if len(res.out) > 1024+len("\n…(truncated)") {
-		t.Fatalf("retained %d bytes, want <= %d", len(res.out), 1024+len("\n…(truncated)"))
+	if len(res.out) > 1024 {
+		t.Fatalf("retained %d bytes, want <= 1024", len(res.out))
 	}
-	if !strings.Contains(string(res.out), "truncated") {
+	if !strings.Contains(string(res.out), truncMarker) {
 		t.Fatalf("truncation was silent: %q", res.out[:40])
 	}
+	if !strings.HasPrefix(string(res.out), truncMarker) {
+		t.Fatalf("marker should lead, since the front is what was dropped: %q", res.out[:40])
+	}
+}
+
+// The tail is what a reader needs. A command that prints a megabyte of build
+// noise and then fails puts the failure at the end, so dropping the tail throws
+// away the only line that says what happened.
+//
+// This is the case that used to break: appendChunk stopped accepting output
+// once the buffer was full, so the sentinel below was silently dropped and the
+// result was indistinguishable from a command that had produced nothing useful.
+func TestExecStreamKeepsTailNotHead(t *testing.T) {
+	const sentinel = "BUILD FAILED: undefined: symbol foo"
+	cmd := shellCmd(`head -c 200000 /dev/zero | tr "\0" "n"; printf '%s' '` + sentinel + `'`)
+	if cmd == nil {
+		t.Skip("no shell")
+	}
+	res := execStream(context.Background(), cmd, nil, 1024)
+	if got := string(res.out); !strings.Contains(got, sentinel) {
+		t.Fatalf("final output lost; got tail %q", tail(res.out, 60))
+	}
+	if len(res.out) > 1024 {
+		t.Fatalf("retained %d bytes, want <= 1024", len(res.out))
+	}
+}
+
+func tail(b []byte, n int) string {
+	if len(b) > n {
+		return string(b[len(b)-n:])
+	}
+	return string(b)
 }
 
 func TestExecStreamDetectsTimeout(t *testing.T) {

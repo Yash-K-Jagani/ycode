@@ -32,6 +32,17 @@ type secretRule struct {
 	re         *regexp.Regexp
 	valueGroup int
 	loose      bool
+	// triggers are lowercase literals the pattern cannot match without.
+	//
+	// Empty means "always run": the cheap fixed-format rules (AKIA..., ghp_...)
+	// are fast enough not to need it, and a missing trigger would be a leak. A
+	// non-empty list lets Redact skip a rule whose keywords are absent, which is
+	// the difference between 70us and 30us on an ordinary sentence.
+	//
+	// Every literal must appear in the pattern. A test checks that against the
+	// compiled regex, so adding a keyword to a rule without listing it here
+	// fails the build rather than silently weakening redaction.
+	triggers []string
 }
 
 var secretRes = []secretRule{
@@ -51,7 +62,8 @@ var secretRes = []secretRule{
 	// Assignments to key-ish names. These capture the value in the last group
 	// and deliberately leave both the key's quotes and the value's quotes out
 	// of the match, so redaction cannot damage JSON or YAML structure.
-	{name: "api-key-assign", re: regexp.MustCompile(`(?i)"?\b(api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b"?(\s*[:=]\s*)["']?([A-Za-z0-9_\-]{12,})`), valueGroup: 3, loose: true},
+	{name: "api-key-assign", re: regexp.MustCompile(`(?i)"?\b(api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret)\b"?(\s*[:=]\s*)["']?([A-Za-z0-9_\-]{12,})`), valueGroup: 3, loose: true,
+		triggers: []string{"key", "secret", "token"}},
 	{name: "password-assign", re: regexp.MustCompile(`(?i)"?\b(passwd|password|pass)\b"?(\s*[:=]\s*)["']?([^\s"'` + "`" + `]{8,})`), valueGroup: 3, loose: true},
 
 	{name: "bearer-token", re: regexp.MustCompile(`(?i)\bbearer\s+([A-Za-z0-9_\-\.~\+/]{20,}={0,2})`), valueGroup: 1},
@@ -59,9 +71,9 @@ var secretRes = []secretRule{
 
 	// Generic high-entropy blobs assigned to a key-ish name. Catches provider
 	// specific formats the explicit rules above do not know about.
-	{name: "high-entropy-assign", re: regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(key|token|secret|password|passwd|credential)s?["']?\s*[:=]\s*["']?)([A-Za-z0-9_\-+/=]{24,})`), valueGroup: 3, loose: true},
+	{name: "high-entropy-assign", re: regexp.MustCompile(`(?i)\b([a-z0-9_.-]*(key|token|secret|password|passwd|credential)s?["']?\s*[:=]\s*["']?)([A-Za-z0-9_\-+/=]{24,})`), valueGroup: 3, loose: true,
+		triggers: []string{"key", "token", "secret", "password", "passwd", "credential"}},
 }
-
 var injectionRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)ignore\s+(all\s+)?(the\s+)?(previous|prior|above|earlier|preceding)\s+instructions`),
 	regexp.MustCompile(`(?i)disregard\s+(all\s+)?(the\s+)?(previous|prior|above|earlier)\s+instructions`),

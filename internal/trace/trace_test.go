@@ -85,10 +85,10 @@ func TestSecretsAreRedacted(t *testing.T) {
 // Errors go through redaction too; a provider error can echo a request header.
 func TestErrorTextIsRedacted(t *testing.T) {
 	r := New()
-	r.Tool(1, "bash", `{"command":"export GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"}`, "",
-		errStr("rejected: ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"))
+	r.Tool(1, "bash", `{"command":"export GITHUB_TOKEN=`+fakeGitHub+`"}`, "",
+		errStr("rejected: "+fakeGitHub))
 	e := r.Events()[0]
-	if strings.Contains(e.Text+e.Err, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345") {
+	if strings.Contains(e.Text+e.Err, fakeGitHub) {
 		t.Fatalf("a secret survived: text=%q err=%q", e.Text, e.Err)
 	}
 }

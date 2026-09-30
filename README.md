@@ -481,16 +481,16 @@ Measured on Windows/amd64, Go 1.27.1, 13th-gen Core i5-13420H, `-benchtime=200x`
 
 | Metric | Value |
 | --- | --- |
-| Packages | 47 (45 with tests) |
-| Go source | 22,843 lines across 138 files |
-| Go tests | 20,716 lines across 136 files |
-| Test functions | 824 |
-| Benchmarks | 31 |
-| Test-to-source ratio | 0.90 |
+| Packages | 49 (45 with tests) |
+| Go source | 22,908 lines across 138 files |
+| Go tests | 21,238 lines across 139 files |
+| Test functions | 827 |
+| Benchmarks | 51 |
+| Test-to-source ratio | 0.93 |
 | Registered tools | 29 built-ins |
 | Slash commands | 31 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 131 |
+| Commits | 132 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a
@@ -500,17 +500,28 @@ together.
 ### The cost of a turn, excluding the model call
 
 This is the number that matters most, because it is the part of a turn ycode is
-responsible for. From `BenchmarkTurn*`, against a scripted provider:
+responsible for. From `BenchmarkTurn*` and the provider/router benchmarks, against
+a scripted provider and a local server:
 
-| Turn | Time | Allocated |
+| Path | Time | Allocated |
 | --- | --- | --- |
 | Chat, no tools | 2.0 µs | 725 B, 20 allocs |
 | Four tool calls | 67 µs | 9.0 KB, 110 allocs |
 | Eight rounds deep | 43 µs | 6.2 KB, 76 allocs |
+| One streamed chunk, parsed end to end | 297 µs | 22 KB |
+| Provider call, warm cache | 3.9 µs | 112 B |
+| Provider call, first (cold cache) | 91 µs | 4.1 KB, 45 allocs |
+| Usage accounting, per provider attempt | 53 ns | 0 B |
 
 Microseconds against a model call measured in hundreds of milliseconds. The
 harness is not where a turn's latency goes, and these are the numbers that would
 show it if that ever changed.
+
+**The provider cache is worth 67×** — 91 µs for the first call against 3.9 µs
+warm. That ratio is the whole argument for the cache: it is what stopped every
+turn paying a fresh TCP connect and TLS handshake to a host it had just been
+talking to. The router's usage ledger costs 53 ns per attempt, so what the daily
+budget reads is effectively free.
 
 ### Measured speedups
 
@@ -614,6 +625,11 @@ a terminal stays usable.
 - **Subagent quality is not benchmarked.** Its latency and cost are bounded and
   documented; whether a given local model delegates *well* is a question about the
   model, and answering it needs real prompts rather than fixtures.
+- **`cost.Tracker.Add` is O(days), not O(1).** It rewrites its whole history to
+  disk on every call — measured at ~550 µs with one day recorded and 1.2 ms with
+  a year. Fine per turn, but it is the one unbounded thing in the cost path, and
+  `/different` calls it five times for one user action. Fixing it is a storage
+  strategy change rather than a tidy, so it is measured and left alone.
 - **One known flaky test**, seen once: `TestExecStreamDoesNotDeadlockOnLargeStderr`
   in `internal/tools` took 156s under full-suite load and passed in 0.59s
   standalone and in the next full run. It spawns a Unix shell pipeline on

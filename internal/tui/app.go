@@ -299,6 +299,12 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 }
 
 func (m *Model) registerPluginTools() {
+	// Guarded because /move calls this, and a Model assembled without a loader -
+	// in a test, or by a future surface that skips New - would otherwise panic in
+	// the middle of a directory change.
+	if m.pluginLoader == nil || m.toolreg == nil {
+		return
+	}
 	m.pluginLoader.Reload()
 	live := map[string]bool{}
 	for _, t := range m.pluginLoader.Tools() {

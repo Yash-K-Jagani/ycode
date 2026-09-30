@@ -359,6 +359,18 @@ func slashRegistry() map[string]slashHandler {
 			}
 			return selectModel(m, entries, args), nil
 		},
+		"/move": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			// Changes which tree the tools read and write. Moves no files -
+			// sessions live under ~/.ycode keyed by id - which the output says,
+			// because "move" suggests otherwise.
+			out, err := m.moveTo(args)
+			if err != nil {
+				// Returned as the message rather than logged: this is the only
+				// place the user will see it.
+				return "could not move: " + err.Error(), nil
+			}
+			return out, nil
+		},
 		"/debug": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			// Raw prompts, tool calls, token breakdowns and router decisions.
 			// plan.md promised this from the start; what existed was an audit log

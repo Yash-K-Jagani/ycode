@@ -28,6 +28,7 @@ func slashList() []slashItem {
 		{"/status", "health, cost, latency"},
 		{"/budget", "daily spend limit, hard stop"},
 		{"/debug", "trace the last turn: prompts, tools, tokens, routing"},
+		{"/move", "work in a different directory"},
 		{"/connect", "API key setup"},
 		{"/doctor", "diagnose setup"},
 		{"/agent", "pick an agent"},

@@ -262,6 +262,30 @@ type StreamChunk struct {
 	// to an estimate and say so rather than presenting the estimate as fact.
 	PromptTok int `json:"prompt_tokens,omitempty"`
 	ComplTok  int `json:"completion_tokens,omitempty"`
+
+	// ToolCalls are the calls the model asked for natively, rather than by
+	// writing a <tool:name>{...}</tool:name> tag into its answer.
+	//
+	// Nil means the model produced prose. An empty non-nil slice would mean it
+	// produced a tool call we could not read, which is a different thing and is
+	// why these are appended to rather than assigned.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+}
+
+// ToolSpec describes one tool to a provider that supports native tool calling.
+//
+// It is the wire form, not the execution form: the agent's Tool interface stays
+// exactly as it is, and this is the projection of it a model needs. Keeping the
+// two apart is what lets a tool gain streaming or subagent delegation without
+// anything a provider has to understand changing.
+type ToolSpec struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Schema is a JSON Schema object as a string. A string rather than
+	// json.RawMessage because several providers require the schema nested under
+	// "function", and letting each one re-marshal it invites subtle differences
+	// in what actually goes on the wire.
+	Schema string `json:"parameters,omitempty"`
 }
 
 // UsageReported reports whether the provider actually sent counts, which is the

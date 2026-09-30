@@ -21,8 +21,40 @@ type Provider interface {
 	Complete(ctx context.Context, model string, msgs []apitypes.Message) (string, error)
 }
 
+// ToolCaller is implemented by providers that support native tool calling: the
+// model is sent a list of tool schemas and answers with structured calls, rather
+// than writing a <tool:name>{...}</tool:name> tag into prose and hoping.
+//
+// It is an optional interface, like Streamer in internal/tools, for the same
+// reason. Provider is four methods and every provider, the SDK and every test
+// implements exactly it; adding a fifth for a capability only some providers
+// have would mean writing "not supported" bodies in the ones that do not. The
+// text protocol stays the fallback, so a provider that does not implement this
+// loses nothing but a little accuracy in what the model has to parse.
+//
+// A caller that has tool schemas and a provider that does not implement this
+// falls back to the text protocol rather than failing: the model's ability to
+// call tools is not worth taking away because the transport cannot carry them.
+type ToolCaller interface {
+	// StreamWithTools is Stream, plus the tool schemas to offer.
+	//
+	// The returned StreamChunk carries ToolCalls when the model asked for
+	// something. Delta is still filled in, so a turn that calls a tool and then
+	// explains itself arrives as both.
+	StreamWithTools(ctx context.Context, model string, msgs []apitypes.Message, specs []apitypes.ToolSpec, w io.Writer) (apitypes.StreamChunk, error)
+}
+
+// CanCallTools reports whether a provider speaks native tool calling.
+func CanCallTools(p Provider) bool {
+	if p == nil {
+		return false
+	}
+	_, ok := p.(ToolCaller)
+	return ok
+}
+
 // Spec is everything ycode needs to know about a provider. Adding one means
-// adding a row here and a key accessor on config.Config — the construction
+// adding a row here and a key accessor on config.Config - the construction
 // switch, the fallback chain, the zero-data-leak check, the price table and
 // the onboarding picker are all derived from this.
 type Spec struct {

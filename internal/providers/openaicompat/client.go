@@ -1,7 +1,6 @@
 package openaicompat
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/Yash-K-Jagani/ycode/internal/httpx"
-	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -74,140 +72,51 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 	return out, nil
 }
 
+// streamEvent is one decoded SSE payload.
+//
+// Shared by both paths so the two cannot disagree about what a chunk contains.
+// Adding ToolCalls here rather than in a parallel struct is what keeps a future
+// fix to the usage handling from having to be made twice.
+type streamEvent struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+			// ToolCalls arrive split across chunks. Index is the position the
+			// server assigned; -1 stands in for a missing index, which several
+			// servers omit when there is only ever one call.
+			ToolCalls []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+// decodeEvent parses one SSE payload, reporting whether it was readable.
+func decodeEvent(data string) (streamEvent, bool) {
+	var ev streamEvent
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return streamEvent{}, false
+	}
+	return ev, true
+}
+
+// Stream runs a turn with no tools offered.
+//
+// It delegates rather than duplicating: the request, the retry policy, the idle
+// watchdog and the error messages all live in StreamWithTools, and two copies
+// of those is how two code paths start disagreeing about what a provider error
+// looks like.
 func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Message, w io.Writer) (apitypes.StreamChunk, error) {
-	if c.APIKey == "" {
-		return apitypes.StreamChunk{}, fmt.Errorf("%s: API key not set", c.Name_)
-	}
-	// include_usage asks the server to send a final chunk carrying token
-	// counts. Without it the harness has to guess tokens as len/4, which is
-	// how a cost figure ends up on screen looking measured when it is not.
-	payload, _ := json.Marshal(map[string]any{
-		"model":    model,
-		"messages": msgs,
-		"stream":   true,
-		"stream_options": map[string]any{
-			"include_usage": true,
-		},
-	})
-	req, err := httpx.NewRequest(ctx, "POST", c.BaseURL+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return apitypes.StreamChunk{}, fmt.Errorf("%s: %w", c.Name_, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	for k, v := range c.ExtraHeaders {
-		req.Header.Set(k, v)
-	}
-	// Retried only while nothing has been received. Once the first chunk is
-	// written to the caller's writer the response is committed, and a retry
-	// would append a second, different answer to the same transcript - so the
-	// body is read after this returns, not inside the retried call.
-	resp, err := httpx.DoWithRetry(ctx, c.HTTP, req, httpx.DefaultRetry())
-	if err != nil {
-		// The provider name is added here rather than inside the retry helper
-		// because only the caller knows which provider it was talking to, and
-		// the fallback chain reports these errors verbatim.
-		return apitypes.StreamChunk{}, fmt.Errorf("%s: %w", c.Name_, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return apitypes.StreamChunk{}, fmt.Errorf("%s %d: %s", c.Name_, resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-
-	// Watch for a stalled stream. Cancelling the request context is what
-	// interrupts a blocked read, so the body is wrapped in a context derived
-	// from the caller's rather than reusing the caller's directly.
-	streamCtx, cancelStream := context.WithCancel(ctx)
-	body, release, watch := httpx.WithStreamIdle(streamCtx, cancelStream, resp.Body, httpx.StreamIdleTimeout)
-	defer release()
-
-	var full strings.Builder
-	var promptTok, complTok int
-	// A data line that will not parse used to be skipped silently, so a
-	// response the harness could not read at all came back as a successful
-	// empty answer and the user was told the model had nothing to say. The
-	// counters turn "every line failed" into an error naming the real cause.
-	var events, decoded int
-	var firstBad string
-	// sawData distinguishes "the server sent an event stream I could not read"
-	// from "the server did not send an event stream at all". A proxy or SSO
-	// login page is HTML with no data: lines anywhere, and it used to come
-	// back as a successful empty answer.
-	var sawData bool
-	bodyBytes := 0
-	sc := bufio.NewScanner(body)
-	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line != "" {
-			bodyBytes += len(line)
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		sawData = true
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
-			break
-		}
-		events++
-		var ev struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			if firstBad == "" {
-				firstBad = textutil.Truncate(strings.TrimSpace(data), 200)
-			}
-			continue
-		}
-		decoded++
-		if ev.Usage != nil {
-			promptTok = ev.Usage.PromptTokens
-			complTok = ev.Usage.CompletionTokens
-		}
-		for _, ch := range ev.Choices {
-			full.WriteString(ch.Delta.Content)
-			_, _ = io.WriteString(w, ch.Delta.Content)
-		}
-	}
-	if err := sc.Err(); err != nil {
-		// Distinguish a provider that went quiet from one that was cut off by
-		// a deadline or a reset connection. The two feel identical to the user
-		// otherwise, and the first is worth knowing about.
-		if watch.Fired() {
-			return apitypes.StreamChunk{Delta: full.String()}, fmt.Errorf(
-				"%s: the provider stopped sending data for %s; the connection was closed",
-				c.Name_, httpx.StreamIdleTimeout)
-		}
-		return apitypes.StreamChunk{Delta: full.String()}, fmt.Errorf("%s: reading stream: %w", c.Name_, err)
-	}
-	if bodyBytes > 0 && !sawData {
-		return apitypes.StreamChunk{}, fmt.Errorf(
-			"%s: the response was not an event stream (%d bytes, no data: lines) - "+
-				"this usually means a proxy, gateway or login page answered instead of the API",
-			c.Name_, bodyBytes)
-	}
-	if events > 0 && decoded == 0 {
-		return apitypes.StreamChunk{Delta: full.String()}, fmt.Errorf(
-			"%s: could not read the response (%d events, none parsed; first was: %s) - "+
-				"the endpoint may not speak the OpenAI chat-completions stream format",
-			c.Name_, events, firstBad)
-	}
-	return apitypes.StreamChunk{
-		Delta:     full.String(),
-		Done:      true,
-		PromptTok: promptTok,
-		ComplTok:  complTok,
-	}, nil
+	return c.StreamWithTools(ctx, model, msgs, nil, w)
 }
 
 func (c *Client) Complete(ctx context.Context, model string, msgs []apitypes.Message) (string, error) {

@@ -1,11 +1,9 @@
 package openaicompat
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -158,49 +156,6 @@ func toolParams(specs []apitypes.ToolSpec) map[string]any {
 	return map[string]any{"tools": tools, "tool_choice": "auto"}
 }
 
-// maxLineBytes bounds a single response line.
-//
-// The old Scanner limit was 1MB and cost a whole turn when a line exceeded it.
-// This is high enough that no real provider reaches it - a megabyte of JSON is
-// far beyond any delta a model emits - and still finite, so a stream that never
-// sends a newline cannot exhaust memory.
-const maxLineBytes = 8 << 20
-
-// readLine reads one newline-delimited line, without the arbitrary limit a
-// bufio.Scanner imposes.
-//
-// buf is reused across lines, because this runs once per streamed chunk: a
-// fresh []byte per line allocated six times more than the Scanner it replaced on
-// an ordinary answer, which is the opposite of what this change was for.
-//
-// The returned error is io.EOF when the stream ended cleanly, and a wrapped
-// errLineTooLong when the bound was hit. Both are ordinary for the caller to
-// distinguish; the point is that "the line was too long" no longer masquerades as
-// a network failure.
-func readLine(rd *bufio.Reader, buf *[]byte, max int) (string, error) {
-	b := (*buf)[:0]
-	for {
-		chunk, isPrefix, err := rd.ReadLine()
-		if err != nil {
-			// Whatever arrived before the error is still a line, and for SSE it
-			// is usually the last one.
-			return string(b), err
-		}
-		b = append(b, chunk...)
-		// Checked on every append, not only when the line continues. Checking
-		// only on isPrefix leaves a hole: the final chunk of a long line carries
-		// the newline, so isPrefix is false and the bound is never consulted.
-		if len(b) > max {
-			return "", fmt.Errorf("response line exceeded %d bytes: %w", max, errLineTooLong)
-		}
-		if !isPrefix {
-			return string(b), nil
-		}
-	}
-}
-
-var errLineTooLong = errors.New("response line too long")
-
 // StreamWithTools runs a turn with native tool calling.
 //
 // Stream delegates here with no specs, so there is exactly one implementation of
@@ -262,27 +217,20 @@ func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apity
 		sawData   bool
 		bodyBytes int
 		tb        = newToolBuilder()
-		rd        = bufio.NewReaderSize(streamBody, 8<<10)
-		lineBuf   []byte
+		lr        = httpx.NewLineReader(streamBody, httpx.DefaultMaxLineBytes)
 	)
-	// A Reader rather than a Scanner.
+	// httpx.LineReader rather than a bufio.Scanner.
 	//
-	// Scanner has a hard line limit and reports exceeding it as "token too
+	// Scanner has a hard 1MB line limit and reports exceeding it as "token too
 	// long", which reached the user as "reading stream" - indistinguishable from
 	// a dropped connection. One SSE line over 1MB therefore lost the entire turn,
 	// including everything that had arrived before it, on what is otherwise a
 	// perfectly ordinary line.
 	//
-	// maxLineBytes is the bound we choose instead: generous enough that no real
-	// provider reaches it, finite enough that a hostile stream cannot exhaust
-	// memory.
-	//
-	// The reader buffer is small on purpose. ReadLine returns isPrefix when it
-	// fills and the code above grows its own slice, so a large buffer buys
-	// nothing and costs a fixed allocation on every stream - 64KB measured as
-	// most of the allocation for an ordinary two-line answer.
+	// Ollama had the same Scanner and the same failure, so both now share one
+	// reader rather than each fixing it separately and drifting.
 	for {
-		line, readErr := readLine(rd, &lineBuf, maxLineBytes)
+		line, readErr := lr.Next()
 		if line != "" {
 			line = strings.TrimSpace(line)
 		}

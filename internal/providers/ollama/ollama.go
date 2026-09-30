@@ -1,7 +1,6 @@
 package ollama
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -123,9 +122,30 @@ func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apity
 	var lines, decoded int
 	var firstBad string
 	calls := newCallCollector()
-	sc := bufio.NewScanner(streamBody)
-	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for sc.Scan() {
+	// httpx.LineReader rather than a bufio.Scanner, for the same reason as
+	// openaicompat: the Scanner's 1MB line limit surfaces as "token too long",
+	// which is indistinguishable from a dropped connection.
+	//
+	// Ollama was the milder case - it checked sc.Err(), so it reported an error
+	// instead of silently truncating - but the user still lost the turn and was
+	// told they were "reading stream". A base64 image part or a large tool-call
+	// argument is enough to reach the limit, and NDJSON does not guarantee small
+	// lines the way a token-per-line habit suggests.
+	lr := httpx.NewLineReader(streamBody, httpx.DefaultMaxLineBytes)
+	var readErr error
+	for readErr == nil {
+		var raw string
+		raw, readErr = lr.Next()
+		// A stream that ends without a trailing newline is normal, not an error,
+		// and the final line still has to be decoded.
+		if raw == "" {
+			if readErr != nil && readErr != io.EOF {
+				readErr = fmt.Errorf("ollama: reading stream: %w", readErr)
+			} else {
+				readErr = io.EOF
+			}
+			break
+		}
 		lines++
 		var line struct {
 			Message struct {
@@ -146,9 +166,9 @@ func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apity
 			PromptEvalCount int `json:"prompt_eval_count"`
 			EvalCount       int `json:"eval_count"`
 		}
-		if err := json.Unmarshal(sc.Bytes(), &line); err != nil {
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
 			if firstBad == "" {
-				firstBad = textutil.Truncate(strings.TrimSpace(sc.Text()), 200)
+				firstBad = textutil.Truncate(strings.TrimSpace(raw), 200)
 			}
 			continue
 		}
@@ -170,7 +190,7 @@ func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apity
 			break
 		}
 	}
-	if err := sc.Err(); err != nil {
+	if readErr != nil && readErr != io.EOF {
 		// A daemon that stops sending is otherwise indistinguishable from a
 		// slow model, and the user needs to be told which they are looking at.
 		if watch.Fired() {
@@ -178,7 +198,7 @@ func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apity
 				"ollama: no data for %s; the daemon may have stopped mid-generation",
 				httpx.StreamIdleTimeout)
 		}
-		return apitypes.StreamChunk{Delta: full.String()}, fmt.Errorf("ollama: reading stream: %w", err)
+		return apitypes.StreamChunk{Delta: full.String()}, readErr
 	}
 	if lines > 0 && decoded == 0 {
 		return apitypes.StreamChunk{Delta: full.String()}, fmt.Errorf(

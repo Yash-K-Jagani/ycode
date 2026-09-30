@@ -3,6 +3,8 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/Yash-K-Jagani/ycode/internal/httpx"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -310,7 +312,7 @@ func TestOneHugeLineIsStillRead(t *testing.T) {
 // Past the bound the error must say so. "token too long" from a Scanner read as
 // a network problem; this names the limit instead.
 func TestBeyondTheLineBoundSaysSo(t *testing.T) {
-	huge := strings.Repeat("x", maxLineBytes+1024)
+	huge := strings.Repeat("x", httpx.DefaultMaxLineBytes+1024)
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: "+huge+"\n")
@@ -319,8 +321,12 @@ func TestBeyondTheLineBoundSaysSo(t *testing.T) {
 	if err == nil {
 		t.Fatal("a line past the bound was accepted")
 	}
-	if !strings.Contains(err.Error(), "line exceeded") {
-		t.Fatalf("unhelpful error: %v", err)
+	// errors.Is rather than a substring match, so this keeps working if the
+	// wording changes - and so callers can distinguish "the provider sent a line
+	// I could not read" from "the connection died", which is the entire reason
+	// the sentinel exists.
+	if !errors.Is(err, httpx.ErrLineTooLong) {
+		t.Fatalf("want ErrLineTooLong, got %v", err)
 	}
 }
 
@@ -328,7 +334,7 @@ func TestBeyondTheLineBoundSaysSo(t *testing.T) {
 func TestUnterminatedLineIsBounded(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+strings.Repeat("x", maxLineBytes+1024))
+		_, _ = io.WriteString(w, "data: "+strings.Repeat("x", httpx.DefaultMaxLineBytes+1024))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}

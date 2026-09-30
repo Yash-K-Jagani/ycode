@@ -256,9 +256,6 @@ func equal(a, b []string) bool {
 // the process is still running.
 func TestExecStreamEmitsBeforeFinish(t *testing.T) {
 	cmd := shellCmd(`printf "a"; sleep 0.4; printf "b"`)
-	if cmd == nil {
-		t.Skip("no shell available")
-	}
 	var mu sync.Mutex
 	var chunks []string
 	start := time.Now()
@@ -286,11 +283,14 @@ func TestExecStreamEmitsBeforeFinish(t *testing.T) {
 }
 
 func TestExecStreamCapturesStderr(t *testing.T) {
-	cmd := shellCmd(`printf "out"; printf "err" 1>&2`)
-	if cmd == nil {
-		t.Skip("no shell available")
-	}
+	cmd := shellCmd(shellScript("out", "err"))
 	res := execStream(context.Background(), cmd, nil, maxOutBytes)
+	// Without this the assertions below are satisfiable by a script that failed:
+	// the error text contains the words being looked for. That is how this test
+	// spent a long time passing on Windows while executing nothing.
+	if res.err != nil {
+		t.Fatalf("the script did not run: %v", res.err)
+	}
 	joined := string(res.out)
 	if !strings.Contains(joined, "out") || !strings.Contains(joined, "err") {
 		t.Fatalf("stdout and stderr both belong in the combined output, got %q", joined)
@@ -299,9 +299,6 @@ func TestExecStreamCapturesStderr(t *testing.T) {
 
 func TestExecStreamCapturesExitError(t *testing.T) {
 	cmd := shellCmd(`printf "before"; exit 3`)
-	if cmd == nil {
-		t.Skip("no shell available")
-	}
 	res := execStream(context.Background(), cmd, nil, maxOutBytes)
 	if res.err == nil {
 		t.Fatal("expected a non-zero exit to be reported")
@@ -315,9 +312,6 @@ func TestExecStreamTruncatesRetainedOutput(t *testing.T) {
 	// A runaway command must not be able to put megabytes into the model's
 	// context, so retention is capped even though live output is not.
 	cmd := shellCmd(`head -c 200000 /dev/zero | tr "\0" "x"`)
-	if cmd == nil {
-		t.Skip("no shell")
-	}
 	res := execStream(context.Background(), cmd, nil, 1024)
 	if len(res.out) > 1024 {
 		t.Fatalf("retained %d bytes, want <= 1024", len(res.out))
@@ -340,9 +334,6 @@ func TestExecStreamTruncatesRetainedOutput(t *testing.T) {
 func TestExecStreamKeepsTailNotHead(t *testing.T) {
 	const sentinel = "BUILD FAILED: undefined: symbol foo"
 	cmd := shellCmd(`head -c 200000 /dev/zero | tr "\0" "n"; printf '%s' '` + sentinel + `'`)
-	if cmd == nil {
-		t.Skip("no shell")
-	}
 	res := execStream(context.Background(), cmd, nil, 1024)
 	if got := string(res.out); !strings.Contains(got, sentinel) {
 		t.Fatalf("final output lost; got tail %q", tail(res.out, 60))
@@ -382,14 +373,23 @@ func TestExecStreamDetectsTimeout(t *testing.T) {
 func TestExecStreamDoesNotDeadlockOnLargeStderr(t *testing.T) {
 	// Far more than a pipe buffer (64KB on Linux), so a sequential drain would
 	// block on the stderr write until the reader got there.
-	cmd := shellCmd(`head -c 300000 /dev/zero | tr "\0" "e" 1>&2; printf "done"`)
-	if cmd == nil {
-		t.Skip("no shell")
-	}
+	//
+	// This used to be a POSIX-only script with 1>&2, which PowerShell cannot
+	// parse - so on Windows it ran nothing, and the test still passed because
+	// the ParserError quotes "printf done". It passed locally for years while
+	// CI failed on it every run. The flood now goes through floodStderr, and the
+	// sentinel through writeOut, so the scenario actually runs on both.
+	var script strings.Builder
+	floodStderr(&script, 300000)
+	writeOut(&script, "done", false)
+	cmd := shellCmd(script.String())
 	done := make(chan streamResult, 1)
 	go func() { done <- execStream(context.Background(), cmd, nil, maxOutBytes) }()
 	select {
 	case res := <-done:
+		if res.err != nil {
+			t.Fatalf("the script did not run: %v", res.err)
+		}
 		if !strings.Contains(string(res.out), "done") {
 			t.Fatalf("stdout after the stderr flood was lost: %q", res.out[len(res.out)-20:])
 		}
@@ -401,20 +401,79 @@ func TestExecStreamDoesNotDeadlockOnLargeStderr(t *testing.T) {
 func TestExecStreamSinkIsSerialised(t *testing.T) {
 	// stdout and stderr both call emit. If those calls were not serialised, a
 	// caller appending to a slice without a lock would race.
-	cmd := shellCmd(`printf "aaaaaaaaaa"; printf "bbbbbbbbbb" 1>&2; printf "cccccccccc"`)
-	if cmd == nil {
-		t.Skip("no shell")
-	}
+	//
+	// Two streams on purpose: with one, the emit mutex is never contended and
+	// removing it would change nothing.
+	cmd := shellCmd(shellScript("aaaaaaaaaa", "bbbbbbbbbb"))
 	var mu sync.Mutex
 	n := 0
-	execStream(context.Background(), cmd, func(string) {
+	res := execStream(context.Background(), cmd, func(string) {
 		mu.Lock()
 		n++
 		mu.Unlock()
 	}, maxOutBytes)
+	// Both streams must actually have run, or this proves nothing about
+	// contention.
+	if res.err != nil {
+		t.Fatalf("the script did not run: %v", res.err)
+	}
+	if !strings.Contains(string(res.out), "aaaaaaaaaa") || !strings.Contains(string(res.out), "bbbbbbbbbb") {
+		t.Fatalf("both streams should have been drained: %q", res.out)
+	}
 	if n == 0 {
 		t.Fatal("sink was never called")
 	}
+}
+
+// shellScript builds a script that writes fixed strings to the two streams,
+// using whatever syntax the platform actually has.
+//
+// This exists because PowerShell cannot parse `1>&2` - it raises a ParserError
+// and runs nothing - while `sh -c` needs it. Three tests below were written with
+// `1>&2` and therefore did nothing on Windows, while still passing: PowerShell's
+// ParserError quotes the line it failed to parse, so an assertion for "out" and
+// "err" was satisfied by the error message describing the script that contains
+// those words.
+//
+// s must not contain a single quote; these are literal test strings.
+func shellScript(stdout, stderr string) string {
+	var b strings.Builder
+	writeOut(&b, stdout, false)
+	writeOut(&b, stderr, true)
+	return b.String()
+}
+
+func writeOut(b *strings.Builder, s string, toStderr bool) {
+	if s == "" {
+		return
+	}
+	if isWindows() {
+		// [Console]::Out.Write goes to stdout without the newline Write-Output
+		// would add, and [Console]::Error.Write goes to stderr.
+		if toStderr {
+			fmt.Fprintf(b, `[Console]::Error.Write('%s'); `, s)
+		} else {
+			fmt.Fprintf(b, `[Console]::Out.Write('%s'); `, s)
+		}
+		return
+	}
+	if toStderr {
+		fmt.Fprintf(b, `printf '%%s' %s 1>&2; `, s)
+	} else {
+		fmt.Fprintf(b, `printf '%%s' %s; `, s)
+	}
+}
+
+// floodStderr appends a script writing n bytes to stderr.
+//
+// Same reasoning as shellScript: on Windows this cannot use head and tr, and on
+// Unix it cannot use a string multiplier.
+func floodStderr(b *strings.Builder, n int) {
+	if isWindows() {
+		fmt.Fprintf(b, `[Console]::Error.Write('x' * %d); `, n)
+		return
+	}
+	fmt.Fprintf(b, `head -c %d /dev/zero | tr "\0" "x" 1>&2; `, n)
 }
 
 // --- bash tool integration ---

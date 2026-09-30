@@ -151,6 +151,11 @@ func (t *Tracker) loadFile() {
 
 // persistDay writes one day's totals. This is the only write path, so it is
 // where the O(days) came from and where the fix lives.
+//
+// A Tracker with no file is in-memory by intent - the tests build them that way,
+// and NewEphemeral exists for the same reason - so it writes nowhere. Without
+// this guard filepath.Dir("") is ".", and an ephemeral tracker quietly drops
+// spend files into whichever directory the process happens to be in.
 func (t *Tracker) persistDay(d string, e *dayEntry) {
 	if t.conn != nil {
 		if data, err := json.Marshal(e); err == nil {
@@ -158,6 +163,9 @@ func (t *Tracker) persistDay(d string, e *dayEntry) {
 				return
 			}
 		}
+	}
+	if t.file == "" {
+		return
 	}
 	_ = os.MkdirAll(filepath.Dir(t.file), 0o755)
 	data, _ := json.Marshal(e)

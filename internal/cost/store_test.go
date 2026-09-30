@@ -114,3 +114,33 @@ func TestTodaySumsAcrossDays(t *testing.T) {
 		t.Fatalf("today did not accumulate: %v then %v", first, second)
 	}
 }
+
+// An in-memory Tracker must write nowhere. filepath.Dir("") is ".", so without
+// the guard in persistDay an ephemeral tracker dropped spend files into whatever
+// directory the process was in - which is how a .day-2026-09-30 file ended up
+// committed to the repository.
+func TestEphemeralTrackerWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	tr := &Tracker{days: map[string]*dayEntry{}}
+	tr.Add("gemini", 100, 100)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("an in-memory tracker wrote %v", names)
+	}
+}

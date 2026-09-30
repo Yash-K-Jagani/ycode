@@ -466,37 +466,10 @@ and conclude the feature is broken.
 
 ## 13. By the numbers
 
-Every figure here is measured, not estimated, and the benchmark or test that
-produces it is named. Where a change made something faster, the before and after
-are both given — a speedup with only the "after" is marketing.
-
-### Size
-
-| Metric | Value |
-| --- | --- |
-| Packages | 47 (45 with tests) |
-| Go source | 22,791 lines across 138 files |
-| Go tests | 20,640 lines across 133 files |
-| Test functions | 842 |
-| Benchmarks | 16 |
-| Test-to-source ratio | 0.90 |
-| Registered tools | 29 built-ins |
-| Slash commands | 31 |
-| Providers | 4 (1 local, 3 cloud) |
-| Commits | 128 |
-
-Test lines are close to source lines on purpose. Most of what is here is
-behaviour that is invisible until it breaks: a provider that returns HTML, a
-context trim that corrupts history, a fallback that splices two responses
-together.
-
-### Measured performance
-
-Each of these was a specific fix to something slow. Where a benchmark measures
-both versions, both are listed so the speedup can be reproduced rather than
-believed.
-
-Reproduce all of them with:
+Every figure here is measured, and the benchmark that produces it is named. Where
+a change made something faster, the before and after are both given — a speedup
+with only the "after" is marketing. Where a benchmark found a problem rather than
+confirming one, that is said too.
 
 ```bash
 go test -run '^$' -bench . -benchmem ./internal/...
@@ -504,27 +477,100 @@ go test -run '^$' -bench . -benchmem ./internal/...
 
 Measured on Windows/amd64, Go 1.27.1, 13th-gen Core i5-13420H, `-benchtime=200x`.
 
+### Size
+
+| Metric | Value |
+| --- | --- |
+| Packages | 47 (45 with tests) |
+| Go source | 22,843 lines across 138 files |
+| Go tests | 20,716 lines across 136 files |
+| Test functions | 824 |
+| Benchmarks | 31 |
+| Test-to-source ratio | 0.90 |
+| Registered tools | 29 built-ins |
+| Slash commands | 31 |
+| Providers | 4 (1 local, 3 cloud) |
+| Commits | 131 |
+
+Test lines are close to source lines on purpose. Most of what is here is
+behaviour that is invisible until it breaks: a provider that returns HTML, a
+context trim that corrupts history, a fallback that splices two responses
+together.
+
+### The cost of a turn, excluding the model call
+
+This is the number that matters most, because it is the part of a turn ycode is
+responsible for. From `BenchmarkTurn*`, against a scripted provider:
+
+| Turn | Time | Allocated |
+| --- | --- | --- |
+| Chat, no tools | 2.0 µs | 725 B, 20 allocs |
+| Four tool calls | 67 µs | 9.0 KB, 110 allocs |
+| Eight rounds deep | 43 µs | 6.2 KB, 76 allocs |
+
+Microseconds against a model call measured in hundreds of milliseconds. The
+harness is not where a turn's latency goes, and these are the numbers that would
+show it if that ever changed.
+
+### Measured speedups
+
+Each row is a pair of benchmarks in the same run.
+
 | Change | Before | After | Speedup | Memory |
 | --- | --- | --- | --- | --- |
 | Session listing, 1,000 sessions (`ListMeta` vs `List`) | 174.2 ms | 1.34 ms | **130×** | 51.7 MB → 167 KB (**310×**) |
 | Context trim, 1,000 messages (vs the old implementation) | 1,157.9 µs | 15.6 µs | **74×** | 1.93 MB / 254 allocs → 14.3 KB / **1 alloc** |
 | Transcript render per streamed delta (incremental vs rejoin) | 18.9 ms | 0.70 ms | **27×** | 16.4 MB → 747 KB (**22×**) |
 | Live tool output, 50 lines (batched vs per-chunk) | 9.89 ms | 0.56 ms | **17.6×** | 2.19 MB → 332 KB (**6.6×**) |
-| Six read-only tool calls (concurrent vs sequential) | 126.7 ms | 20.9 ms | **6.1×** | 81 → 107 allocs |
-| TUI render while streaming, 500 tokens | 8.17 s | 27.4 ms | **~296×** | — |
-
-The parallel tool row is the smallest speedup and the most surprising one: six
-read calls were serialised, because the concurrency classifier existed and
-nothing consulted it.
+| Six read-only tool calls (concurrent vs sequential) | 123.3 ms | 20.7 ms | **6.0×** | 81 → 107 allocs |
+| Trace record, 250 KB tool output (truncate before redact) | 171 ms | 7.8 ms | **22×** | 3.0 MB → 495 KB (**6.1×**) |
+| Redaction, ordinary prose (skip absent trigger words) | 74.6 µs | 51.0 µs | **1.46×** | — |
+| Redaction, 1 KB of prose | 1.90 ms | 1.46 ms | **1.30×** | — |
 
 Two of these also fixed a correctness problem, not just a slow one. The trim was
 **corrupting conversation history** as well as being quadratic; incremental
 rendering stopped re-joining every message on every token, which also stopped the
 transcript flickering.
 
+### Where the time goes in the tool parser
+
+`ParseCalls` runs on every assistant message. It is two regex passes, and the
+second only runs when the first finds nothing — an ordering that is a deliberate
+optimisation and is worth having:
+
+| Input | Time |
+| --- | --- |
+| Prose, no tool call | 4.7 µs |
+| One well-formed call | 4.2 µs |
+| Four calls | 15.9 µs |
+| Malformed fence (tolerant path) | 3.7 µs |
+
+### Two shapes worth knowing about
+
+Benchmarking rather than reading found these; both are bounded, and both now have
+scaling benchmarks that will show a change.
+
+**`ParseCalls` is quadratic in stray tool openers.** 10 → 43 µs, 50 → 358 µs,
+200 → 3.3 ms. The tolerant scan calls `extractObject` once per opener and each
+call scans forward to the end of the message when nothing balances. A large tool
+argument is mildly superlinear too: 1 KB → 60 µs, 8 KB → 431 µs, 64 KB → 7.1 ms.
+Both are capped in practice by the round limit and the repeat guard, and a 64 KB
+tool argument is a normal large file write rather than an attack. Fixing it means
+changing the most delicate parser in the loop, so it is measured and documented
+rather than rewritten.
+
+**Redaction is dominated by two rules.** On a 48-byte string, `high-entropy-assign`
+costs 24.6 µs and `api-key-assign` 12.5 µs, against ~3 µs for each fixed-format
+rule — they open with `[a-z0-9_.-]*` before a keyword alternation, so the engine
+re-walks the text looking for a prefix that might match. Both require a literal
+word to be present, so `Redact` now skips them when none occurs. The optimisation
+is held up by two tests: every listed trigger must appear in its own compiled
+pattern, and 35 samples of real secret shapes must produce byte-identical output
+with the triggers populated and disabled.
+
 ### Absolute figures
 
-These are the current numbers with no before/after, for the paths a user feels.
+The paths a user feels, with no before/after.
 
 | Benchmark | Time | Allocated |
 | --- | --- | --- |
@@ -534,25 +580,25 @@ These are the current numbers with no before/after, for the paths a user feels.
 | Single streamed delta | 151 µs | 57 KB, 321 allocs |
 | One live tool chunk, handled + rendered | 247 µs | 49 KB, 159 allocs |
 | Sidebar render | 142 µs | 13 KB, 239 allocs |
+| Trace record, small note | 11 µs | 1.6 KB, 48 allocs |
+| Trace render, 600 records | 330 µs | 181 KB |
 | Repo tree, 10,000 entries | 12.5 ms | 11 KB, 202 allocs |
 | Cache store, one upsert | 873 µs | 1.6 KB, 46 allocs |
 | Streaming render, 2,000 tokens | 175 ms | 166 MB cumulative |
 | Streaming render, unterminated code fence | 41.8 ms | 15 MB |
 
-The batching overhead is 139 ns — a delta every 40 ms costs 328 ns instead of
-189 ns, which is free. That is why the delta coalescer exists and why the live
-tool gate could be added without anyone noticing it.
+Batching costs 139 ns: a delta every 40 ms is 328 ns instead of 189 ns. That is why
+the delta coalescer is free and why the live tool gate was affordable.
 
 **Streaming render, 2,000 tokens** allocates 166 MB *cumulatively* across the
 stream. That is not 166 MB resident: it is garbage collected as it goes, and the
-live view is a few KB. It is listed because a number that looks alarming should
-be explained rather than omitted.
+live view is a few KB. It is listed because a number that looks alarming should be
+explained rather than omitted.
 
 **Unterminated code fence** is the worst case for the streaming renderer — the
-whole buffer is an open fence, so it cannot find a boundary to stop at and
-re-renders more. It is a pathological input (a model that forgets to close a
-fence), and it is measured because worst cases are the ones that decide whether
-the terminal stays usable.
+whole buffer is an open fence, so it cannot find a boundary to stop at. It is a
+pathological input, and it is measured because worst cases are what decide whether
+a terminal stays usable.
 
 ### What is not measured
 
@@ -565,15 +611,21 @@ the terminal stays usable.
   instead, which is where it belongs anyway.
 - **No benchmark for the tool loop as a whole**, only its parts. A turn's real
   cost is dominated by the model call, which is not ycode's to measure.
+- **Subagent quality is not benchmarked.** Its latency and cost are bounded and
+  documented; whether a given local model delegates *well* is a question about the
+  model, and answering it needs real prompts rather than fixtures.
 - **One known flaky test**, seen once: `TestExecStreamDoesNotDeadlockOnLargeStderr`
   in `internal/tools` took 156s under full-suite load and passed in 0.59s
   standalone and in the next full run. It spawns a Unix shell pipeline on
   Windows, so it is sensitive to machine load rather than to anything in the
   code. It is called out here rather than left to be rediscovered as a random red
   build.
-
----
-
+- **One known gap in redaction**, found by benchmarking rather than by reading the
+  patterns: every assignment rule requires the keyword at the *end* of the name, so
+  `db_secret_value=...` and `api_secret_value=...` are not redacted. Recorded in a
+  test that fails if the behaviour changes. Widening the patterns changes the
+  false-positive cost — a tool log full of `[REDACTED]` is its own problem — so
+  that is a decision to make deliberately rather than inside a benchmarking change.
 ## 14. Configuration reference
 
 `~/.ycode/config.yaml` (user) + `<project>/.ycode/config.yaml` (overrides;

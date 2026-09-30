@@ -158,9 +158,74 @@ func TestAssignmentRulesMissKeywordsInsideLongerNames(t *testing.T) {
 // Documented rather than assumed: the entropy check is why a low-entropy value
 // assigned to a secret-looking name survives. That is a deliberate trade, and
 // this records it so a future change does not rediscover it as a bug.
+//
+// This fails rather than skips when the behaviour changes. It was originally a
+// t.Skip, which meant that changing the entropy rule turned this from PASS into
+// SKIP - still green in CI, so the tripwire never tripped. A tripwire that
+// reports success when it is broken is worse than none, because it looks like
+// coverage.
 func TestHighEntropyRuleStillChecksEntropy(t *testing.T) {
 	const low = "my_secret=ABCDEFGHIJKLMNOPQRSTUVWX"
 	if Redact(low) != low {
-		t.Skip("the entropy check no longer applies to this rule; update this test")
+		t.Fatal("the entropy check no longer applies to this rule; update the rule and this test together")
+	}
+}
+
+// Shannon entropy cannot tell an alphabet from a random string: a uniform
+// spread over 24 symbols is log2(24) = 4.58 bits/char, above the 3.5 threshold.
+// So `my_secret=ABCDEFGHIJKLMNOPQRSTUVWX` was redacted - every mention of the
+// alphabet in a tool log came back as [REDACTED], which is the false-positive
+// cost the entropy rule exists to prevent.
+//
+// The discriminator is structure rather than distribution: a credential is not a
+// walk through the alphabet, while a real hex or base64 secret wraps (0-9 then
+// a-f) instead of continuing.
+func TestSequentialRunsAreNotSecrets(t *testing.T) {
+	for _, v := range []string{
+		"ABCDEFGHIJKLMNOPQRSTUVWX",
+		"abcdefghijklmnopqrstuvwx",
+		"123456789012345678901234",
+		"zyxwvutsrqponmlkjihgfedcba",
+	} {
+		in := "my_secret=" + v
+		if got := Redact(in); got != in {
+			t.Errorf("sequential run %q was redacted as %q", v, got)
+		}
+		if len(ScanSecrets(in)) != 0 {
+			t.Errorf("sequential run %q reported as a finding", v)
+		}
+	}
+}
+
+// The run check must not swallow real credentials, including ones that happen to
+// start with digits.
+func TestRealSecretsStillRedactedDespiteRunCheck(t *testing.T) {
+	for _, v := range []string{
+		"0123456789abcdef0123456789abcdef",
+		"Xk9pQ2mNv7wLz4RbT8yH3cJ6mQ9wZ",
+		"aB3dEf5hJk7mN9pQ2rT4vX6zY8bC1dE3",
+	} {
+		in := "api_key=" + v
+		if Redact(in) == in {
+			t.Errorf("real-looking secret %q was not redacted", v)
+		}
+	}
+}
+
+// Redact and ScanSecrets walk the same rule list, so they must agree. They did
+// not: ScanSecrets gated loose values on placeholder and entropy, Redact did
+// not, so a trace could be full of [REDACTED] where the scan reported nothing.
+func TestRedactAndScanSecretsAgreeOnLooseValues(t *testing.T) {
+	for _, in := range []string{
+		"my_secret=ABCDEFGHIJKLMNOPQRSTUVWX",
+		"password=xxxxxxxxxxxxxxxxxxxxxxxx",
+		"api_key=0123456789abcdef0123456789abcdef",
+		"token=not-a-real-secret-value-here",
+	} {
+		got := Redact(in) != in
+		want := len(ScanSecrets(in)) > 0
+		if got != want {
+			t.Errorf("disagreement on %q: Redact=%v ScanSecrets=%v", in, got, want)
+		}
 	}
 }

@@ -44,6 +44,13 @@ func Redact(text string) string {
 
 // replaceGroups substitutes group valueGroup with a marker, preserving every
 // other captured group and all unmatched text between matches.
+//
+// Rules flagged loose apply the same placeholder and entropy gates that
+// ScanSecrets applies. They have to, because both walk the same secretRes list:
+// ScanSecrets gating a value while Redact substitutes it left a trace full of
+// [REDACTED] where a scan reported nothing, which is the false-positive cost the
+// entropy rule exists to avoid. `my_secret=ABCDEFGHIJKLMNOPQRSTUVWX` was the
+// visible case - the alphabet scores 4.58 bits/char, so it read as a credential.
 func replaceGroups(text string, r secretRule) string {
 	var b []byte
 	last := 0
@@ -57,6 +64,11 @@ func replaceGroups(text string, r secretRule) string {
 			// Optional group that did not participate; skip this match.
 			continue
 		}
+		if r.loose && skipLooseValue(text[gs:ge], r) {
+			// Not a secret. Leaving last alone means the text is copied through
+			// by the next match, so nothing is dropped.
+			continue
+		}
 		b = append(b, text[last:gs]...)
 		b = append(b, ("[REDACTED:" + r.name + "]")...)
 		last = ge
@@ -66,6 +78,17 @@ func replaceGroups(text string, r secretRule) string {
 	}
 	b = append(b, text[last:]...)
 	return string(b)
+}
+
+// skipLooseValue reports whether a captured value is too un-secret to redact.
+//
+// Shared with ScanSecrets so the two cannot drift again - the drift is what let
+// the false positive through while the corresponding test skipped.
+func skipLooseValue(val string, r secretRule) bool {
+	if isPlaceholder(val) {
+		return true
+	}
+	return r.name == "high-entropy-assign" && !looksHighEntropy(val)
 }
 
 // anyPresent reports whether any trigger occurs in the already-lowercased text.

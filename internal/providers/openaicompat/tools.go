@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Yash-K-Jagani/ycode/internal/httpx"
+	"github.com/Yash-K-Jagani/ycode/internal/providers/toolwire"
 	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
@@ -142,18 +143,9 @@ func toolParams(specs []apitypes.ToolSpec) map[string]any {
 	if len(specs) == 0 {
 		return nil
 	}
-	tools := make([]map[string]any, 0, len(specs))
-	for _, s := range specs {
-		fn := map[string]any{"name": s.Name}
-		if s.Description != "" {
-			fn["description"] = s.Description
-		}
-		if s.Schema != "" {
-			fn["parameters"] = s.Schema
-		}
-		tools = append(tools, map[string]any{"type": "function", "function": fn})
-	}
-	return map[string]any{"tools": tools, "tool_choice": "auto"}
+	// Cached: the spec list is identical between turns, and rebuilding these
+	// maps was the largest constant on the wire for a request.
+	return map[string]any{"tools": toolwire.List(specs), "tool_choice": "auto"}
 }
 
 // StreamWithTools runs a turn with native tool calling.

@@ -176,7 +176,11 @@ func TestTrimOmitsMarkerWithoutSystemMessage(t *testing.T) {
 	}
 	out, dropped := Trim(msgs, 20)
 	if dropped == 0 {
-		t.Skip("nothing was dropped, so the marker case is not exercised")
+		// Fatal, not Skip: a fixture that stopped requiring trimming means this
+		// test has quietly stopped testing what it names. As a skip it would go
+		// green, and a regression that broke trimming would silence it instead
+		// of reporting the broken fixture.
+		t.Fatal("this fixture is supposed to require trimming, and nothing was dropped")
 	}
 	for i, m := range out {
 		if m.Content == compactedMarker {
@@ -194,7 +198,8 @@ func TestTrimWithSystemMessageInsertsMarker(t *testing.T) {
 	}
 	out, dropped := Trim(msgs, 20)
 	if dropped == 0 {
-		t.Skip("nothing was dropped")
+		// See above: a broken fixture is a failure, not a reason to skip.
+		t.Fatal("this fixture is supposed to require trimming, and nothing was dropped")
 	}
 	if out[0].Role != apitypes.RoleSystem || out[0].Content != "you are ycode" {
 		t.Fatalf("the system message must stay first: %s", summarise(out))

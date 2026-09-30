@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,26 +43,9 @@ func NewEphemeral() *Tracker {
 }
 
 func New() *Tracker {
-	t := &Tracker{file: filepath.Join(config.Dir(), "cost.json"), days: map[string]*dayEntry{}}
+	t := &Tracker{file: filepath.Join(config.Dir(), "cost.json")}
 	t.conn = db.Shared()
-	if t.conn != nil {
-		if raw, ok := db.KVGet(t.conn, "cost/days"); ok {
-			_ = json.Unmarshal([]byte(raw), &t.days)
-		} else if data, err := os.ReadFile(t.file); err == nil {
-			// one-time import from legacy JSON
-			_ = json.Unmarshal(data, &t.days)
-			t.persist()
-		}
-		if t.days == nil {
-			t.days = map[string]*dayEntry{}
-		}
-		return t
-	}
-	data, _ := os.ReadFile(t.file)
-	_ = json.Unmarshal(data, &t.days)
-	if t.days == nil {
-		t.days = map[string]*dayEntry{}
-	}
+	t.load()
 	return t
 }
 
@@ -79,21 +63,106 @@ func (t *Tracker) Add(provider string, promptTok, complTok int) float64 {
 	e.PromptTok += promptTok
 	e.ComplTok += complTok
 	e.USD += usd
-	t.persist()
+	// One day, not the whole map.
+	t.persistDay(d, e)
 	return usd
 }
 
-func (t *Tracker) persist() {
-	data, _ := json.Marshal(t.days)
+// costDayPrefix namespaces one stored row per day.
+//
+// The days map used to be serialised in full on every Add, which made a turn
+// cost O(days): ~550us with a day recorded, 1.2ms with a year. Worse, nothing
+// read the history - Today() is the only accessor - so every one of those
+// rewrites was paid for data no caller consumed. Storing each day under its own
+// key makes Add O(1) and keeps the history intact for a future caller.
+const costDayPrefix = "cost/day/"
+
+// legacyDaysKey is the single aggregate row this replaced. Kept so an existing
+// install is not silently reset to zero spend, which is the kind of failure that
+// looks like the feature simply not working.
+const legacyDaysKey = "cost/days"
+
+func (t *Tracker) load() {
+	t.days = map[string]*dayEntry{}
 	if t.conn != nil {
-		if err := db.KVSet(t.conn, "cost/days", string(data)); err == nil {
+		for d, raw := range db.KVPrefix(t.conn, costDayPrefix) {
+			var e dayEntry
+			if json.Unmarshal([]byte(raw), &e) == nil {
+				t.days[d] = &e
+			}
+		}
+		if len(t.days) > 0 {
 			return
 		}
+		// No per-day rows yet: migrate the aggregate, if there is one.
+		if raw, ok := db.KVGet(t.conn, legacyDaysKey); ok {
+			_ = json.Unmarshal([]byte(raw), &t.days)
+			if len(t.days) > 0 {
+				for d, e := range t.days {
+					t.persistDay(d, e)
+				}
+				_ = db.KVDelete(t.conn, legacyDaysKey)
+				return
+			}
+		}
 	}
-	_ = os.MkdirAll(config.Dir(), 0o755)
-	_ = os.WriteFile(t.file, data, 0o644)
+	t.loadFile()
 }
 
+// loadFile reads the per-day files, falling back to a legacy aggregate JSON.
+//
+// The file backend writes one file per day for the same reason as the database
+// path: rewriting an aggregate on every turn is what made Add O(days).
+func (t *Tracker) loadFile() {
+	dir := filepath.Dir(t.file)
+	prefix := filepath.Base(t.file) + ".day-"
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, ent := range entries {
+			name := ent.Name()
+			if !strings.HasPrefix(name, prefix) {
+				continue
+			}
+			d := strings.TrimPrefix(name, prefix)
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				continue
+			}
+			var e dayEntry
+			if json.Unmarshal(data, &e) == nil {
+				t.days[d] = &e
+			}
+		}
+	}
+	if len(t.days) > 0 {
+		return
+	}
+	if data, err := os.ReadFile(t.file); err == nil {
+		_ = json.Unmarshal(data, &t.days)
+		if len(t.days) > 0 {
+			for d, e := range t.days {
+				t.persistDay(d, e)
+			}
+		}
+	}
+	if t.days == nil {
+		t.days = map[string]*dayEntry{}
+	}
+}
+
+// persistDay writes one day's totals. This is the only write path, so it is
+// where the O(days) came from and where the fix lives.
+func (t *Tracker) persistDay(d string, e *dayEntry) {
+	if t.conn != nil {
+		if data, err := json.Marshal(e); err == nil {
+			if err := db.KVSet(t.conn, costDayPrefix+d, string(data)); err == nil {
+				return
+			}
+		}
+	}
+	_ = os.MkdirAll(filepath.Dir(t.file), 0o755)
+	data, _ := json.Marshal(e)
+	_ = os.WriteFile(t.file+".day-"+d, data, 0o644)
+}
 func (t *Tracker) Today() (prompt, compl int, usd float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()

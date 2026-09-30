@@ -103,11 +103,7 @@ func ScanSecrets(text string) []Finding {
 			// placeholders, so their value must clear the placeholder and
 			// entropy checks. Fixed-format rules need neither.
 			if r.loose {
-				val := hit[r.valueGroup]
-				if isPlaceholder(val) {
-					continue
-				}
-				if r.name == "high-entropy-assign" && !looksHighEntropy(val) {
+				if skipLooseValue(hit[r.valueGroup], r) {
 					continue
 				}
 			}
@@ -127,6 +123,9 @@ func looksHighEntropy(s string) bool {
 	if isPlaceholder(s) {
 		return false
 	}
+	if isRun(s) {
+		return false
+	}
 	// Shannon entropy in bits/char. Real base64/hex secrets land around
 	// 4.0+; prose, words, and repeated digits sit well below.
 	freq := map[rune]float64{}
@@ -144,6 +143,44 @@ func looksHighEntropy(s string) bool {
 		h -= p * math.Log2(p)
 	}
 	return h >= 3.5
+}
+
+// isRun reports whether s walks consecutively through the alphabet in one
+// direction, ignoring case: "abcdefgh", "ABCDEFGH", "1234567890".
+//
+// Shannon entropy cannot catch these, which is why this exists rather than a
+// threshold change. A uniform spread over 24 symbols is log2(24) = 4.58
+// bits/char - comfortably above the 3.5 threshold - so "my_secret=ABCDEFGH...W"
+// scored as a credential and every mention of the alphabet in a tool log came
+// back redacted. What separates a run from a real secret is not the
+// distribution but the structure: a credential is not a walk through the
+// alphabet, and a base64 or hex secret wraps (0-9 then a-f) rather than
+// continuing, so genuine values still score as high entropy.
+//
+// The tripwire that would have caught this lived in a test that skipped instead
+// of failing when the behaviour changed, so it had been reporting green while
+// the false positive was live.
+func isRun(s string) bool {
+	r := []rune(strings.ToLower(s))
+	// Below 8 characters this is too short to be the documentation value it is
+	// usually confused for, and short enough that rejecting it risks a real key.
+	if len(r) < 8 {
+		return false
+	}
+	step := 0
+	for i := 1; i < len(r); i++ {
+		d := int(r[i]) - int(r[i-1])
+		if d != 1 && d != -1 {
+			return false
+		}
+		// One direction only: "abacada" alternates and is not a run.
+		if step == 0 {
+			step = d
+		} else if d != step {
+			return false
+		}
+	}
+	return true
 }
 
 // isPlaceholder detects filler credentials that tools and docs commonly use.

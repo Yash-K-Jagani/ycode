@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/Yash-K-Jagani/ycode/internal/config"
@@ -75,4 +76,38 @@ func KVDelete(conn *sql.DB, key string) error {
 	}
 	_, err := conn.Exec(`DELETE FROM kv WHERE k=?`, key)
 	return err
+}
+
+// KVPrefix returns every key/value pair whose key starts with prefix, with the
+// prefix stripped from the returned keys.
+//
+// It exists so a caller storing one record per key can read them all back
+// without keeping an index in a second store - which is what makes per-record
+// writes worth doing in the first place. See cost.Tracker, which used to
+// rewrite one aggregate row on every recorded turn.
+func KVPrefix(conn *sql.DB, prefix string) map[string]string {
+	out := map[string]string{}
+	if conn == nil {
+		return out
+	}
+	rows, err := conn.Query(`SELECT k,v FROM kv WHERE k LIKE ? ESCAPE '\'`, escapeLike(prefix)+"%")
+	if err != nil {
+		return out
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return out
+		}
+		out[k[len(prefix):]] = v
+	}
+	return out
+}
+
+// escapeLike neutralises the LIKE wildcards in a user-supplied prefix, so a key
+// containing % or _ matches literally instead of matching everything.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }

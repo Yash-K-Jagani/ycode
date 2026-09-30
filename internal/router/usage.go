@@ -1,6 +1,9 @@
 package router
 
-import "github.com/Yash-K-Jagani/ycode/pkg/apitypes"
+import (
+	"github.com/Yash-K-Jagani/ycode/internal/trace"
+	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
+)
 
 // chunkUsage pulls the usage out of a final stream chunk.
 //
@@ -102,4 +105,24 @@ func (r *Router) record(provider, model string, c Usage) {
 	r.usageMu.Lock()
 	defer r.usageMu.Unlock()
 	r.usage.Add(provider, model, c)
+}
+
+// SetTrace attaches a recorder for routing decisions.
+//
+// Optional and set after construction, because the router is built before the
+// UI exists and a recorder that is only ever read by /debug should not be a
+// constructor argument on every call site. A nil recorder means nothing is
+// recorded, so callers never check.
+func (r *Router) SetTrace(rec *trace.Recorder) { r.trace = rec }
+
+// noteRouter records one routing decision.
+//
+// The turn number is left to the recorder, which owns the counter: the router
+// does not know when a turn starts, and guessing would produce records grouped
+// under the wrong turn - worse than not grouping them.
+func (r *Router) noteRouter(text string) {
+	if r.trace == nil {
+		return
+	}
+	r.trace.Note(0, text)
 }

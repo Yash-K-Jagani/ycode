@@ -29,6 +29,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/sessions"
 	"github.com/Yash-K-Jagani/ycode/internal/skills"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
+	"github.com/Yash-K-Jagani/ycode/internal/trace"
 	"github.com/Yash-K-Jagani/ycode/internal/tui/theme"
 	"github.com/Yash-K-Jagani/ycode/internal/webhooks"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
@@ -68,6 +69,10 @@ type Model struct {
 	// one, and Unlimited() is the answer when no limit is configured, so
 	// callers never have to check for nil before asking.
 	budget *cost.Budget
+
+	// tracer records the last few turns for /debug: request, response, tool
+	// calls, usage and routing decisions. See internal/trace.
+	tracer *trace.Recorder
 
 	// budgetWarned records that the limit has already been reported, so the
 	// message is given once at the crossing rather than on every turn after it.
@@ -280,6 +285,7 @@ func New(cfg config.Config, r *router.Router, sess *sessions.Session, workdir st
 		mode: modes.Chat, agent: ag,
 		toolreg: tools.DefaultRegistry(workdir),
 		workdir: workdir, tracker: tracker,
+		tracer: trace.New(),
 		budget: cost.NewBudget(tracker, cfg.DailyBudgetUSD),
 		mcpMgr: mcp.NewManager(), hookset: hooks.Load(),
 		skillMgr: skills.NewManager(),

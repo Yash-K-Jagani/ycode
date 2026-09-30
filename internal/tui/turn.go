@@ -170,7 +170,11 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		//
 		// It is created before onTool so that finishing a tool can flush it.
 		gate := newChunkGate(prog)
+		turnNum := m.tracer.NextTurn()
 		onTool := func(name, args, result string, err error) {
+			// Recorded before anything else so the trace shows the call even if
+			// the turn is cancelled or the UI never renders a card for it.
+			m.tracer.Tool(turnNum, name, args, result, err)
 			// Push the last of this tool's output before its completion card.
 			// Without the flush the final lines sit in the gate waiting for an
 			// interval that will not come, and the live view drops them.
@@ -300,10 +304,16 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				est := yctx.Estimate([]apitypes.Message{{Role: apitypes.RoleUser, Content: userText}})
 				return doneMsg{text: hit, note: "⚡ semantic cache hit (no model call)", ctx: est, ctxB: yctx.BudgetFor(model), mode: mode}
 			}
+			// Recorded before the call as well as after, so a turn that hangs or
+			// fails still leaves evidence of what was asked. "What did you even
+			// send it" is the first question about a bad turn.
+			m.tracer.Request(turnNum, m.cfg.ActiveProvider, model, renderTraceMessages(msgs))
 			full, fbNote, err := m.router.StreamWithFallback(ctx, msgs, w)
 			if err != nil {
+				m.tracer.Note(turnNum, "provider call failed: "+err.Error())
 				return errMsg{err}
 			}
+			m.tracer.Response(turnNum, m.cfg.ActiveProvider, model, full)
 			answer = full
 			m.semCache.Store(ctx, userText, full, m.cfg.ActiveProvider, model)
 			if fbNote != "" && prog != nil {
@@ -454,6 +464,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		}
 		turnUSD := tracker.Add(costProvider, promptTok, complTok)
 		_, _, usd := tracker.Today()
+		m.tracer.Usage(turnNum, costProvider, model, promptTok, complTok, usd, u.Reported)
 		notes = append(notes, fmt.Sprintf("$%.4f today", usd))
 		if ragNote != "" {
 			notes = append(notes, ragNote)

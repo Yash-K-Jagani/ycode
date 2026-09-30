@@ -359,6 +359,38 @@ func slashRegistry() map[string]slashHandler {
 			}
 			return selectModel(m, entries, args), nil
 		},
+		"/debug": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			// Raw prompts, tool calls, token breakdowns and router decisions.
+			// plan.md promised this from the start; what existed was an audit log
+			// that records that a turn happened and nothing about what was in it.
+			a := strings.TrimSpace(args)
+			switch {
+			case a == "clear":
+				n := m.tracer.Count()
+				m.tracer.Reset()
+				return fmt.Sprintf("cleared %d trace record(s)", n), nil
+			case a == "list":
+				if m.tracer.Count() == 0 {
+					return "no trace recorded yet", nil
+				}
+				return fmt.Sprintf("%d record(s) across turn(s) 1-%d", m.tracer.Count(), m.tracer.Last()), nil
+			}
+			// A bare number goes back that many turns; anything else is rejected
+			// rather than silently ignored, so a typo does not look like it worked.
+			turn, full := 0, false
+			rest := a
+			if strings.HasSuffix(a, " full") {
+				full, rest = true, strings.TrimSpace(strings.TrimSuffix(a, " full"))
+			}
+			if rest != "" {
+				n, err := strconv.Atoi(rest)
+				if err != nil || n <= 0 {
+					return fmt.Sprintf("usage: /debug [turn] | /debug full | /debug list | /debug clear\n  got %q", a), nil
+				}
+				turn = n
+			}
+			return m.debugView(turn, full), nil
+		},
 		"/budget": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			// Plan.md promised budget limits and hard stops from the start.
 			// Without a way to look at the limit, a stop is just an error

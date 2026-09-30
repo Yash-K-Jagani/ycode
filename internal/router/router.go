@@ -16,6 +16,7 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/config"
 	"github.com/Yash-K-Jagani/ycode/internal/db"
 	"github.com/Yash-K-Jagani/ycode/internal/providers"
+	"github.com/Yash-K-Jagani/ycode/internal/trace"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
 )
 
@@ -45,6 +46,9 @@ type Router struct {
 	// any single turn.
 	usageMu sync.Mutex
 	usage   Usage
+
+	// trace records routing decisions for /debug. Nil means nothing recorded.
+	trace *trace.Recorder
 
 	// factory builds a provider. It is a field rather than a direct call into
 	// the providers table so tests can drive the fallback chain without
@@ -226,6 +230,11 @@ func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message
 		return chunk.Delta, "", nil
 	}
 	primaryErr := err
+	// The fallback decision is the single most useful thing in a trace when a
+	// turn is slow or the answer reads like a different model wrote it, and the
+	// router is the only place that knows it happened.
+	r.noteRouter(fmt.Sprintf("primary %s/%s failed after %s: %v",
+		r.cfg.ActiveProvider, model, time.Since(t0).Round(time.Millisecond), primaryErr))
 	// Every attempt's error is kept. Returning only the first meant that when
 	// all three providers failed, the message named the primary and said
 	// nothing about why the other two were rejected - which is usually the
@@ -236,10 +245,11 @@ func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message
 		fp, err := r.Provider(fb.Provider)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", fb.Provider, err))
+			r.noteRouter(fmt.Sprintf("fallback %s unusable: %v", fb.Provider, err))
 			continue
 		}
 		attempt.Reset()
-		t0 := time.Now()
+		t0 = time.Now()
 		chunk, err := fp.Stream(ctx, fb.Model, msgs, &attempt)
 		r.record(fb.Provider, fb.Model, chunkUsage(chunk))
 		r.stats.Record(fb.Provider, time.Since(t0), len(chunk.Delta)/4, err == nil)
@@ -250,11 +260,17 @@ func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message
 			if len(errs) > 1 {
 				note += fmt.Sprintf(" (%d earlier attempt(s) also failed)", len(errs)-1)
 			}
+			r.noteRouter(fmt.Sprintf("served by fallback %s/%s in %s",
+				fb.Provider, fb.Model, time.Since(t0).Round(time.Millisecond)))
 			return chunk.Delta, note, nil
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", fb.Provider, err))
+		r.noteRouter(fmt.Sprintf("fallback %s/%s failed after %s: %v",
+			fb.Provider, fb.Model, time.Since(t0).Round(time.Millisecond), err))
 	}
-	return "", "", fmt.Errorf("every provider failed — %s", strings.Join(errs, "; "))
+	all := fmt.Errorf("every provider failed — %s", strings.Join(errs, "; "))
+	r.noteRouter("no provider served the turn: " + all.Error())
+	return "", "", all
 }
 
 // --- latency stats ---

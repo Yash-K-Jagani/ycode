@@ -264,6 +264,23 @@ The `*_api_key` values are written to the **OS keyring**, never to
 `config.yaml`, so `ycode config` output is safe to paste into an issue. Each
 provider's key is stored separately — setting one never populates another.
 
+**Headless exit codes** (`ycode run`, and its `ops` subcommand). Every failure
+has its own code so a CI job can tell them apart without parsing the log:
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| 0 | Done | — |
+| 2 | `blocked` — the model reported it could not continue | reword the goal |
+| 3 | `budget_exhausted` — the iteration budget ran out | raise `--goal-iters` |
+| 4 | `stalled` — a turn ran but made no tool calls | reword, or use a larger model |
+| 5 | `cancelled` | — |
+| 6 | `unverified` — ended with the goal still active | read the log |
+| 7 | `spend_limited` — `daily_budget_usd` reached | raise the budget, or go local |
+
+3 and 7 are both "stopped early, work still owed" and are deliberately distinct:
+one means raise the iteration count, the other means raise the spend limit.
+Sending a CI job to the wrong setting is worse than either error.
+
 API: `GET /healthz`, `GET /v1/models`, `GET /v1/status`, `POST /v1/chat`
 `{prompt, mode?, agent?, workdir?, goal_iters?}` (`mode: goal` runs the goal
 loop and returns `goal_status`). **Auth:** `ycode serve` prints a token, stored
@@ -359,13 +376,18 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
   `mcp__*`/`plugin__*`), red `[LOCAL ONLY]` badge. A guardrail, not a sandbox:
   `bash`/`run` still execute arbitrary commands. See `docs/security.md`.
 - **`daily_budget_usd: 1.50`** (default `0`, meaning no limit): a hard ceiling on
-  a day's metered spend. A turn that would begin over the line does not begin,
-  and an unattended goal run stops at the next iteration rather than mid-token.
-  Set it in-session with `/budget 1.50`, watch it in the sidebar, read it with
-  `/budget`. There is no soft mode on purpose — a warning that then spends anyway
-  is the worst of both. Local models cost nothing, so a limit only matters for
-  cloud providers. Currently a ceiling on *recorded* spend: headless turns are
-  not metered, so a session that only runs `ycode -p` will not accumulate.
+  a day's spend. A turn that would begin over the line does not begin, and an
+  unattended goal run stops at the next iteration rather than mid-token. Covers
+  the TUI, headless runs and goal runs alike, since all three record into the same
+  tracker. Set it in-session with `/budget 1.50`, watch it in the sidebar, read it
+  with `/budget`. There is no soft mode on purpose — a warning that then spends
+  anyway is the worst of both. Local models cost nothing, so a limit only matters
+  for cloud providers.
+  Spend comes from the token counts the provider reports, not an estimate; when a
+  provider reports none, nothing is charged and the log says `unmeasured` rather
+  than showing a confident zero. A headless goal run stopped by the budget exits
+  **7** (`spend_limited`), distinct from **3** (`budget_exhausted`, the iteration
+  count), so CI can tell "raise `MaxIter`" from "raise `daily_budget_usd`".
 - Full model: `docs/security.md`.
 
 ---
@@ -381,15 +403,15 @@ are both given — a speedup with only the "after" is marketing.
 | Metric | Value |
 | --- | --- |
 | Packages | 47 |
-| Go source | 20,516 lines across 127 files |
-| Go tests | 17,773 lines across 122 files |
-| Test functions | 693 |
+| Go source | 20,746 lines across 128 files |
+| Go tests | 18,189 lines across 124 files |
+| Test functions | 712 |
 | Benchmarks | 16 |
-| Test-to-source ratio | 0.87 |
+| Test-to-source ratio | 0.88 |
 | Registered tools | 28 built-ins |
 | Slash commands | 29 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 118 |
+| Commits | 119 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a
@@ -398,52 +420,79 @@ together.
 
 ### Measured performance
 
-Each of these was a specific fix to something slow, with the before and after
-recorded at the time.
+Each of these was a specific fix to something slow. Where a benchmark measures
+both versions, both are listed so the speedup can be reproduced rather than
+believed.
 
-| Change | Before | After | Speedup |
-| --- | --- | --- | --- |
-| TUI renders while streaming (500 tokens) | 8.17 s | 27.6 ms | ~296× |
-| Context trim, 1,000 messages | 2.4 s | 30 ms | ~80× |
-| Session listing (1,000 sessions) | 167 ms | 0.86 ms | ~196× |
-| Six read-only tool calls in parallel | 123.6 ms | 21 ms | ~5.9× |
-| Transcript render, one message | 1.0 ms | 0.031 ms | ~32× |
+Reproduce all of them with:
 
-The parallel tool figure is the smallest of the five and the most surprising:
-6 read calls were serialised, because the concurrency classifier existed and
+```bash
+go test -run '^$' -bench . -benchmem ./internal/...
+```
+
+Measured on Windows/amd64, Go 1.27.1, 13th-gen Core i5-13420H, `-benchtime=200x`.
+
+| Change | Before | After | Speedup | Memory |
+| --- | --- | --- | --- | --- |
+| Session listing, 1,000 sessions (`ListMeta` vs `List`) | 174.2 ms | 1.34 ms | **130×** | 51.7 MB → 167 KB (**310×**) |
+| Context trim, 1,000 messages (vs the old implementation) | 1,157.9 µs | 15.6 µs | **74×** | 1.93 MB / 254 allocs → 14.3 KB / **1 alloc** |
+| Transcript render per streamed delta (incremental vs rejoin) | 18.9 ms | 0.70 ms | **27×** | 16.4 MB → 747 KB (**22×**) |
+| Live tool output, 50 lines (batched vs per-chunk) | 9.89 ms | 0.56 ms | **17.6×** | 2.19 MB → 332 KB (**6.6×**) |
+| Six read-only tool calls (concurrent vs sequential) | 126.7 ms | 20.9 ms | **6.1×** | 81 → 107 allocs |
+| TUI render while streaming, 500 tokens | 8.17 s | 27.4 ms | **~296×** | — |
+
+The parallel tool row is the smallest speedup and the most surprising one: six
+read calls were serialised, because the concurrency classifier existed and
 nothing consulted it.
 
-### Live tool output
+Two of these also fixed a correctness problem, not just a slow one. The trim was
+**corrupting conversation history** as well as being quadratic; incremental
+rendering stopped re-joining every message on every token, which also stopped the
+transcript flickering.
 
-Reproduce with `go test -run '^$' -bench ToolChunk ./internal/tui/` on a
-13th-gen i5.
+### Absolute figures
 
-| Operation | Time | Allocated |
+These are the current numbers with no before/after, for the paths a user feels.
+
+| Benchmark | Time | Allocated |
 | --- | --- | --- |
-| One chunk, handled and rendered | 231 µs | 52.8 KB, 159 allocs |
-| 50 lines as 50 separate chunks | 9.64 ms | 2.20 MB, 7,556 allocs |
-| The same 50 lines as one batched chunk | 455 µs | 332 KB, 219 allocs |
+| Token estimate, one message | 462 ns | 146 B, 0 allocs |
+| Coalescing writer, pass-through | 189 ns | 8 B, 1 alloc |
+| Coalescing writer, 40 ms batched | 328 ns | 17 B, 0 allocs |
+| Single streamed delta | 151 µs | 57 KB, 321 allocs |
+| One live tool chunk, handled + rendered | 247 µs | 49 KB, 159 allocs |
+| Sidebar render | 142 µs | 13 KB, 239 allocs |
+| Repo tree, 10,000 entries | 12.5 ms | 11 KB, 202 allocs |
+| Cache store, one upsert | 873 µs | 1.6 KB, 46 allocs |
+| Streaming render, 2,000 tokens | 175 ms | 166 MB cumulative |
+| Streaming render, unterminated code fence | 41.8 ms | 15 MB |
 
-231 µs per chunk is the number that shapes the design. At that cost a build
-printing a thousand lines a second cannot be streamed one line at a time — it
-would spend a quarter of a second of CPU per line and allocate megabytes per
-second for nothing. Batching is a **21× speedup and 6.6× less memory** on
-identical output, and the gate that does it drops no bytes: a gap in the middle
-of a build log is worse than a late one.
+The batching overhead is 139 ns — a delta every 40 ms costs 328 ns instead of
+189 ns, which is free. That is why the delta coalescer exists and why the live
+tool gate could be added without anyone noticing it.
+
+**Streaming render, 2,000 tokens** allocates 166 MB *cumulatively* across the
+stream. That is not 166 MB resident: it is garbage collected as it goes, and the
+live view is a few KB. It is listed because a number that looks alarming should
+be explained rather than omitted.
+
+**Unterminated code fence** is the worst case for the streaming renderer — the
+whole buffer is an open fence, so it cannot find a boundary to stop at and
+re-renders more. It is a pathological input (a model that forgets to close a
+fence), and it is measured because worst cases are the ones that decide whether
+the terminal stays usable.
 
 ### What is not measured
 
 - **No end-to-end latency numbers against live providers.** Everything here is
   local, synthetic, and reproducible in CI. Cloud latency is the provider's, not
-  ycode's, and quoting it would say nothing.
+  ycode's, and quoting it would say nothing about ycode.
 - **`go test -race` does not run locally.** The toolchain here is 32-bit MinGW
   (`gcc -dumpmachine` → `mingw32`), and `race` needs 64-bit: `cc1.exe: sorry,
   unimplemented: 64-bit mode not compiled in`. The race detector runs in CI
   instead, which is where it belongs anyway.
-- **Headless turns are not metered for cost.** The router does not surface
-  per-turn token counts, so `daily_budget_usd` bounds recorded spend and a
-  session that only runs `ycode -p` accumulates nothing. Called out in the
-  budget documentation rather than left to be discovered.
+- **No benchmark for the tool loop as a whole**, only its parts. A turn's real
+  cost is dominated by the model call, which is not ycode's to measure.
 
 ---
 

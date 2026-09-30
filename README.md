@@ -214,6 +214,7 @@ exited 0.
 | `/export [file]` | Save transcript as markdown |
 | `/status` | Mode, tokens, cost today, cache hits, RAG index, latency |
 | `/budget [usd]` | Show the daily spend limit and today's spend, or set it (`/budget 1.50`, `/budget 0` for none). Turns are refused once the limit is reached |
+| `/debug [turn\|full\|list\|clear]` | Trace the last turn: the prompt, tool calls with arguments and results, token breakdown, and every routing decision |
 | `/connect` | Interactive window: provider → API key/host → model picker |
 | `/doctor` | Health check: tools, Ollama, RAG, cache, model advice |
 | `/agent [name]` | Pick builder/planner/reviewer |
@@ -317,7 +318,7 @@ Build mode tools (plan gets the read-only subset, goal gets all of them except `
 `grep` `glob` `bash` (denylist, 60s, 32KB cap) `git` (secret-scanning commit
 gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `testgen` (Go/Rust/Node/Deno/Bun/Java/C#/PHP/Ruby/Python, name filter + extra args) `security` `tree`
-`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `delete` (guarded) `summary` `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) `models` (gguf) — plus dynamic `mcp__*` and `plugin__*` tools.
+`todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `delete` (guarded) `summary` `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) `models` (gguf) `task` (delegate to a subagent) — plus dynamic `mcp__*` and `plugin__*` tools.
 Chat code blocks get Chroma syntax highlighting with line numbers; write/edit results show red/green diffs. File reads/writes show path cards; shell commands their own tint.
 
 Streaming tools (`bash`, `run`, `testgen`, `notebook`) additionally put their
@@ -384,6 +385,35 @@ Three details are easy to get wrong and are covered by tests:
 
 ## 11. Skills, plugins, MCP, hooks, prompts
 
+### Subagents
+
+`task` delegates a read-only question to a subagent with its own context window
+and gets back a summary. The point is the parent's context: "search the repo for
+every place this is called" becomes one tool call and a result line, instead of
+40KB of matches competing for the context the rest of the work needs.
+
+Available in `build` and `plan`, with two personas: `explorer` (search and
+report) and `analyst` (read and explain). Give it a broad question
+("what does this module do", "find every usage of X"); use ordinary tools for
+anything specific.
+
+**It can only read.** A subagent's allow-list is the *intersection* of what the
+parent may use and what is marked delegable through the `Isolatable` interface —
+currently 11 read-only built-ins. That intersection is deliberate: it means
+delegation is always a narrowing, never a way to reach a tool the parent could
+not. There is a test that a subagent asked to overwrite a file is refused and
+told so.
+
+This is a narrower allow-list, **not a sandbox**. A subagent is a model call that
+can call the tools it was given; what keeps it safe is that every one of those
+tools only reads.
+
+Also bounded, because a subagent that hangs holds the parent's tool call open
+where the parent can neither see nor cancel it: 4 tool rounds and 3 minutes by
+default, and answers are capped at 8KB so a subagent cannot defeat its own
+purpose by returning a wall of text. Progress appears as `subagent:` lines, and
+`/debug` shows the question it was asked.
+
 - **Skills** (`~/.ycode/skills/<name>/SKILL.md`): install from git/`owner/repo`/dir,
   `run` injects into the next turn, `export`/`import` zip-shares. Docs: `docs/skills.md`.
 - **Plugins** (`~/.ycode/plugins/<name>/plugin.json` + command): run as tools,
@@ -436,16 +466,16 @@ are both given — a speedup with only the "after" is marketing.
 
 | Metric | Value |
 | --- | --- |
-| Packages | 47 (41 with tests) |
-| Go source | 21,330 lines across 130 files |
-| Go tests | 19,280 lines across 127 files |
-| Test functions | 762 |
+| Packages | 47 (45 with tests) |
+| Go source | 22,235 lines across 135 files |
+| Go tests | 20,000 lines across 130 files |
+| Test functions | 809 |
 | Benchmarks | 16 |
 | Test-to-source ratio | 0.90 |
-| Registered tools | 28 built-ins |
+| Registered tools | 29 built-ins |
 | Slash commands | 29 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 122 |
+| Commits | 124 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a

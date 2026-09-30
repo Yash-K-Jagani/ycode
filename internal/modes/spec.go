@@ -46,6 +46,7 @@ type spec struct {
 // literal so goal mode can derive its own allow-list from it.
 var buildTools = []string{
 	"read", "write", "create", "add", "edit", "remove", "summary", "changes",
+	"task", // delegate a read-only question to a subagent (see internal/subagent)
 	"grep", "glob", "bash", "git", "github", "browser", "testgen", "security",
 	"tree", "todo", "memory", "patch", "run", "delete", "db", "notebook",
 	"api", "vscode", "scaffold", "models",
@@ -74,7 +75,7 @@ var specs = []spec{
 	{
 		mode: Plan, slash: "/plan", icon: "⚡", summary: "read-only planning",
 		rounds: 6, repoContext: true, readOnly: true,
-		tools: []string{"read", "summary", "changes", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models"},
+		tools: []string{"read", "summary", "changes", "grep", "glob", "git", "browser", "security", "tree", "todo", "notebook", "api", "db", "models", "task"},
 		prompt: func(s spec, reg *tools.Registry, model string, rounds int) string {
 			return "\nMODE: PLAN (read-only, planning only — never chat, never answer directly)." +
 				" Research with read/grep/glob/git, then ALWAYS output a numbered step-by-step plan and end with 'AWAITING APPROVAL'." +

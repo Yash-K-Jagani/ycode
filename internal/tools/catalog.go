@@ -78,6 +78,13 @@ var catalog = []entry{
 	// url allowlist is the same one every call goes through.
 	{name: "browser", build: func(string) Tool { return &BrowserTool{} }, network: true, timeout: quick,
 		concurrent: true, isolatable: true, note: "fetches arbitrary URLs"},
+	// Delegates to a subagent. The implementation lives in internal/subagent and is
+	// wired per turn, because it needs a provider and a progress sink that do not
+	// exist at construction. Unwired, the tool says so rather than appearing to
+	// work - which is why it is in the catalog rather than added alongside the
+	// plugin tools, where nothing would notice it was missing.
+	{name: "task", build: func(string) Tool { return &TaskTool{} }, timeout: external,
+		note: "spawns a model call inside a tool call; read-only by construction"},
 
 	// Read-mostly tools. Each has at least one action that writes (a file, a
 	// queue, a subprocess), so they stay sequential. A tool that is parallel

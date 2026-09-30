@@ -13,7 +13,9 @@ import (
 	"github.com/Yash-K-Jagani/ycode/internal/goal"
 	"github.com/Yash-K-Jagani/ycode/internal/hooks"
 	"github.com/Yash-K-Jagani/ycode/internal/modes"
+	"github.com/Yash-K-Jagani/ycode/internal/providers"
 	"github.com/Yash-K-Jagani/ycode/internal/rag"
+	"github.com/Yash-K-Jagani/ycode/internal/subagent"
 	"github.com/Yash-K-Jagani/ycode/internal/textutil"
 	"github.com/Yash-K-Jagani/ycode/internal/tools"
 	"github.com/Yash-K-Jagani/ycode/pkg/apitypes"
@@ -171,6 +173,42 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		// It is created before onTool so that finishing a tool can flush it.
 		gate := newChunkGate(prog)
 		turnNum := m.tracer.NextTurn()
+		// The subagent delegate is (re)registered per turn rather than once at
+		// startup, because it needs the mode and the message loop: it reports
+		// progress through prog, and prog does not exist until a turn is running.
+		// AddWith replaces, so this is cheap and leaves no duplicates.
+		//
+		// Not marked concurrent. A subagent is a model call inside a tool call;
+		// two at once doubles the spend without making the question easier.
+		reg.AddWith(&tools.TaskTool{
+			Delegate: subagent.Delegate(subagent.ToolOptions{
+				Resolve: func() (providers.Provider, string) {
+					p, mdl, err := m.router.Active()
+					if err != nil {
+						return nil, ""
+					}
+					return p, mdl
+				},
+				Registry: reg,
+				Workdir:  workdir,
+				Mode:     string(mode),
+				Agent:    "explorer",
+				Timeout:  3 * time.Minute,
+				Recorder: m.tracer,
+				OnEvent: func(kind, text string) {
+					// Milestones only. Forwarding the subagent's own output would put
+					// its internal chatter into the parent's transcript, which is the
+					// context saving the whole feature exists to provide.
+					if prog == nil {
+						return
+					}
+					switch kind {
+					case "start", "done", "error", "agent":
+						prog.Send(sysMsg("subagent: " + text))
+					}
+				},
+			}),
+		}, false, false)
 		onTool := func(name, args, result string, err error) {
 			// Recorded before anything else so the trace shows the call even if
 			// the turn is cancelled or the UI never renders a card for it.

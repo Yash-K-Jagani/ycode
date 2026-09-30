@@ -49,9 +49,9 @@ func (b *blockingProvider) Stream(ctx context.Context, _ string, _ []apitypes.Me
 	return apitypes.StreamChunk{}, ctx.Err()
 }
 
-func registry(t *testing.T) *tools.Registry {
-	t.Helper()
-	return tools.DefaultRegistry(t.TempDir())
+func registry(tb testing.TB) *tools.Registry {
+	tb.Helper()
+	return tools.DefaultRegistry(tb.TempDir())
 }
 
 func opts(t *testing.T, p providers.Provider) Options {
@@ -359,4 +359,27 @@ func TestTaskToolIsRegisteredAndReportsWhenUnwired(t *testing.T) {
 	if !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("unhelpful error: %v", err)
 	}
+}
+
+// --- benchmarks ---
+
+// Allow runs on every task call, and its result is the subagent's entire
+// safety boundary - so it is worth knowing what a delegation costs before
+// anything is added to it.
+func BenchmarkAllow(b *testing.B) {
+	r := registry(b)
+	plan := modes.AllowedTools(modes.Plan)
+	build := modes.AllowedTools(modes.Build)
+	b.Run("plan_read_only", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			Allow(plan, r)
+		}
+	})
+	b.Run("build_wide", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			Allow(build, r)
+		}
+	})
 }

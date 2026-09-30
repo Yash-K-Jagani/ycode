@@ -285,7 +285,58 @@ func TestToolChoiceIsAutoNotRequired(t *testing.T) {
 	}
 }
 
-// --- interface conformance ---
+// A single SSE line over 1MB used to lose the whole turn, reported as "reading
+// stream" - indistinguishable from a dropped connection. The Scanner had a hard
+// 1MB line limit; the reader now has an 8MB one and says which bound it hit.
+func TestOneHugeLineIsStillRead(t *testing.T) {
+	huge := strings.Repeat("x", 2<<20)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		b, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"delta": map[string]string{"content": huge}}},
+		})
+		_, _ = io.WriteString(w, "data: "+string(b)+"\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n")
+	})
+	chunk, err := c.Stream(context.Background(), "m", oneMsg, io.Discard)
+	if err != nil {
+		t.Fatalf("a 2MB line was rejected: %v", err)
+	}
+	if len(chunk.Delta) != len(huge) {
+		t.Fatalf("delta = %d bytes, want %d", len(chunk.Delta), len(huge))
+	}
+}
+
+// Past the bound the error must say so. "token too long" from a Scanner read as
+// a network problem; this names the limit instead.
+func TestBeyondTheLineBoundSaysSo(t *testing.T) {
+	huge := strings.Repeat("x", maxLineBytes+1024)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+huge+"\n")
+	})
+	_, err := c.Stream(context.Background(), "m", oneMsg, io.Discard)
+	if err == nil {
+		t.Fatal("a line past the bound was accepted")
+	}
+	if !strings.Contains(err.Error(), "line exceeded") {
+		t.Fatalf("unhelpful error: %v", err)
+	}
+}
+
+// A stream that never sends a newline must not hang or exhaust memory.
+func TestUnterminatedLineIsBounded(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+strings.Repeat("x", maxLineBytes+1024))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	})
+	if _, err := c.Stream(context.Background(), "m", oneMsg, io.Discard); err == nil {
+		t.Fatal("a stream that never ends was accepted")
+	}
+}
 
 // The optional interface is discovered by type assertion, so a provider that
 // does not implement it must not accidentally satisfy it.
@@ -368,3 +419,5 @@ func TestToolBuilderRejectsNothingItShouldAccept(t *testing.T) {
 		t.Fatal("an empty builder returned a non-nil slice")
 	}
 }
+
+// --- interface conformance ---

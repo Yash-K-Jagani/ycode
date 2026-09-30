@@ -33,6 +33,19 @@ type Router struct {
 	// provider keeps the pool alive across turns.
 	cache map[string]cachedProvider
 
+	// usage accumulates provider-reported token counts.
+	//
+	// Every provider already sends these on the final stream chunk, and they
+	// were being read and thrown away. That is why the TUI estimated cost with
+	// a `written/4` heuristic, why headless recorded nothing at all, and why a
+	// daily budget could not bound an unattended `ycode -p`: there was no
+	// measured number to bound.
+	//
+	// Reset per turn with Begin, taken with Take, because the Router outlives
+	// any single turn.
+	usageMu sync.Mutex
+	usage   Usage
+
 	// factory builds a provider. It is a field rather than a direct call into
 	// the providers table so tests can drive the fallback chain without
 	// standing up four HTTP servers, and so a future provider type (a local
@@ -55,6 +68,18 @@ func New(cfg config.Config) *Router {
 		cache:   map[string]cachedProvider{},
 		factory: defaultFactory,
 	}
+}
+
+// SetFactoryForTest overrides how providers are constructed.
+//
+// Exists so a test can point a provider at a local server without standing up
+// four of them and without reaching into the provider registry. Production code
+// has no reason to call it.
+func (r *Router) SetFactoryForTest(f func(id, key, host string) (providers.Provider, error)) {
+	r.factory = f
+	r.mu.Lock()
+	r.cache = map[string]cachedProvider{}
+	r.mu.Unlock()
 }
 
 // defaultFactory is the real construction path: look the spec up and build it.
@@ -138,6 +163,7 @@ func (r *Router) Stream(ctx context.Context, msgs []apitypes.Message, w io.Write
 	}
 	t0 := time.Now()
 	chunk, err := p.Stream(ctx, model, msgs, w)
+	r.record(r.cfg.ActiveProvider, model, chunkUsage(chunk))
 	r.stats.Record(r.cfg.ActiveProvider, time.Since(t0), len(chunk.Delta)/4, err == nil)
 	if err != nil {
 		return "", err
@@ -193,6 +219,7 @@ func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message
 	t0 := time.Now()
 	var attempt bytes.Buffer
 	chunk, err := p.Stream(ctx, model, msgs, &attempt)
+	r.record(r.cfg.ActiveProvider, model, chunkUsage(chunk))
 	r.stats.Record(r.cfg.ActiveProvider, time.Since(t0), len(chunk.Delta)/4, err == nil)
 	if err == nil {
 		_, _ = w.Write(attempt.Bytes())
@@ -214,6 +241,7 @@ func (r *Router) StreamWithFallback(ctx context.Context, msgs []apitypes.Message
 		attempt.Reset()
 		t0 := time.Now()
 		chunk, err := fp.Stream(ctx, fb.Model, msgs, &attempt)
+		r.record(fb.Provider, fb.Model, chunkUsage(chunk))
 		r.stats.Record(fb.Provider, time.Since(t0), len(chunk.Delta)/4, err == nil)
 		if err == nil {
 			_, _ = w.Write(attempt.Bytes())

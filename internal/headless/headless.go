@@ -30,6 +30,16 @@ type Options struct {
 	Stderr  io.Writer
 	// GoalIters overrides the goal-mode iteration budget (0 = default).
 	GoalIters int
+
+	// Tracker records this run's spend. Nil means a fresh one, which is right in
+	// production: the tracker is persisted, so a fresh one still sees the whole
+	// day's total and the budget still binds across runs.
+	//
+	// It is a field so a test can supply an in-memory tracker. Reading the
+	// persisted record is correct behaviour and untestable behaviour, and
+	// without this seam every budget test also depends on whatever the developer
+	// spent that morning.
+	Tracker *cost.Tracker
 }
 
 // goalMaxIters is the headless goal budget; short compared with the TUI
@@ -69,6 +79,9 @@ func (o *Options) withDefaults() {
 	if o.Stderr == nil {
 		o.Stderr = io.Discard
 	}
+	if o.Tracker == nil {
+		o.Tracker = cost.New()
+	}
 }
 
 // Outcome is how a run ended. It is only meaningful in goal mode, where a run
@@ -93,6 +106,14 @@ const (
 	// OutcomeUnverified: the run ended while the goal was still active, for a
 	// reason not otherwise classified.
 	OutcomeUnverified Outcome = "unverified"
+	// OutcomeSpendLimited: the daily spend budget was reached.
+	//
+	// Deliberately distinct from OutcomeExhausted, which is the iteration
+	// budget. Both are "stopped early, work still owed" and a CI job needs to
+	// tell them apart: exhausted means raise MaxIter, spend-limited means raise
+	// daily_budget_usd or change provider. Folding them together would send
+	// someone to fix the wrong setting.
+	OutcomeSpendLimited Outcome = "spend_limited"
 )
 
 // ExitCode maps an outcome to a process exit status, for CI use.
@@ -105,6 +126,10 @@ func (o Outcome) ExitCode() int {
 		return 2
 	case OutcomeExhausted:
 		return 3
+	case OutcomeSpendLimited:
+		// Its own code so a CI job can tell "raise MaxIter" apart from "raise
+		// daily_budget_usd" without parsing the log.
+		return 7
 	case OutcomeStalled:
 		return 4
 	case OutcomeCancelled:
@@ -146,13 +171,11 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	// ceiling, and an unattended `ycode ops` cannot be used to spend past a
 	// limit the user set.
 	//
-	// What this does not yet do is meter headless's own usage: the router does
-	// not surface per-turn token counts, so a session that only ever runs
-	// headless records nothing and this check always passes. Guarding against
-	// the spend that is recorded beats not guarding, but the honest description
-	// is a ceiling on recorded spend, not on headless spend.
-	if b := cost.NewBudget(cost.New(), cfg.DailyBudgetUSD); b.Exceeded() {
-		return "", errors.New(b.BlockedMessage())
+	// It is now enforceable for headless spend too: this run records its own
+	// token counts via recordUsage, so the tracker it enforces against includes
+	// what it spent.
+	if err := overBudget(cfg, o.Tracker, o.Stderr); err != nil {
+		return "", err
 	}
 	if cfg.ZeroDataLeak {
 		ctx = tools.WithZeroLeak(ctx)
@@ -242,8 +265,57 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 	if !cfg.ZeroDataLeak {
 		webhooks.Fire("turn_complete", map[string]any{"mode": string(o.Mode)})
 	}
+	recordUsage(cfg, o.Tracker, r, log)
 	audit.Log("headless_turn", map[string]any{"mode": string(o.Mode), "prompt": prompt, "answer": answer})
 	return answer, nil
+}
+
+// recordUsage adds this turn's tokens to the shared spend tracker.
+//
+// Headless recorded nothing before this. That was not a cosmetic gap: the
+// tracker is what `daily_budget_usd` enforces against, so an unattended
+// `ycode -p` spent money that no limit could see and a budget set in the TUI was
+// quietly bypassed by running the same work from a script.
+//
+// It also means `/status` and the sidebar now show CI and script spend, rather
+// than only what was typed into the TUI.
+//
+// The provider is taken from the usage rather than the config, because a turn
+// that fell back to Gemini was priced by Gemini and costing it as Ollama would
+// report $0.
+func recordUsage(cfg config.Config, tr *cost.Tracker, r *router.Router, log io.Writer) {
+	u := r.TakeUsage()
+	provider := u.Provider
+	if provider == "" {
+		provider = cfg.ActiveProvider
+	}
+	if !u.Reported {
+		// Say so on the log. A cost line that looks measured but is a guess is
+		// the thing this whole change exists to remove, and the log is where
+		// someone debugging a bill will look.
+		_, _ = fmt.Fprintf(log, "[usage] provider %s reported no token counts; cost is unmeasured\n", provider)
+		return
+	}
+	usd := tr.Add(provider, u.PromptTok, u.ComplTok)
+	_, _ = fmt.Fprintf(log, "[usage] %s: %d prompt + %d completion tokens, $%.4f\n",
+		provider, u.PromptTok, u.ComplTok, usd)
+}
+
+// overBudget reports whether the day's recorded spend has reached the limit, and
+// says why with the number attached.
+//
+// Called between goal iterations as well as before a turn, so an unattended run
+// stops at a boundary where the reason is visible in the log.
+func overBudget(cfg config.Config, tr *cost.Tracker, log io.Writer) error {
+	// cost.New, not a stored budget: the limit can be raised between iterations and
+	// re-reading it means the run picks that up without a restart.
+	b := cost.NewBudget(tr, cfg.DailyBudgetUSD)
+	if b.Exceeded() {
+		msg := b.BlockedMessage()
+		_, _ = fmt.Fprintf(log, "[budget] %s\n", msg)
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // runGoal drives the autonomous goal loop headlessly: the goal text is the
@@ -354,8 +426,23 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 		if g.Rejected() {
 			_, _ = fmt.Fprintf(log, "%s\n", g.RejectionNote())
 		}
+		// Record this iteration's cost before deciding whether to run another.
+		//
+		// The order matters: checking first would test the spend as it was
+		// before this iteration, so the run would always be allowed one more
+		// than the limit permits.
+		recordUsage(cfg, o.Tracker, r, log)
 		if !g.Next() {
 			break
+		}
+		// The budget stop, at the boundary where the reason is visible in the
+		// log. Without it the check in runTurn fires one iteration late and
+		// reports nothing about why.
+		if err := overBudget(cfg, o.Tracker, log); err != nil {
+			g.Status = goal.Cancelled
+			last += "\n\n(stopped: " + err.Error() + ")"
+			_, _ = fmt.Fprintf(log, "goal: %s\n", g.Summary())
+			return last, OutcomeSpendLimited, err
 		}
 		msgs = append(msgs,
 			apitypes.Message{Role: apitypes.RoleAssistant, Content: res},

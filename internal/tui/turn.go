@@ -425,14 +425,40 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				}
 			}
 		}
+		// Prefer what the provider counted over what we guessed.
+		//
+		// The old line was promptTok (an estimate of the request) plus
+		// written/4, a four-characters-per-token rule of thumb. It was on by
+		// default, it looked like a measurement next to a dollar figure, and it
+		// was wrong by tens of percent often enough to matter on a bill. Every
+		// provider already sends real counts on the final chunk; they were being
+		// read and discarded.
+		//
+		// With a tool loop the prompt is re-sent every round, so the reported
+		// total is larger than one estimate of the first request - which is
+		// correct, because that is what was actually paid for.
+		u := m.router.TakeUsage()
+		costProvider := m.cfg.ActiveProvider
 		complTok := written/4 + toolBytes/4
-		turnUSD := tracker.Add(m.cfg.ActiveProvider, promptTok, complTok)
+		if u.Reported {
+			promptTok, complTok = u.PromptTok, u.ComplTok
+			// A turn that fell back was priced by the fallback. Costing it as the
+			// active provider reports $0 for a Gemini turn on Ollama.
+			if u.Provider != "" {
+				costProvider = u.Provider
+			}
+		} else {
+			// Say the number is an estimate. Silence here is what made it read
+			// as measured.
+			notes = append(notes, "cost estimated (provider sent no usage)")
+		}
+		turnUSD := tracker.Add(costProvider, promptTok, complTok)
 		_, _, usd := tracker.Today()
 		notes = append(notes, fmt.Sprintf("$%.4f today", usd))
 		if ragNote != "" {
 			notes = append(notes, ragNote)
 		}
-		audit.Log("turn", map[string]any{"mode": string(mode), "provider": m.cfg.ActiveProvider, "model": model, "prompt": userText, "answer": answer})
+		audit.Log("turn", map[string]any{"mode": string(mode), "provider": costProvider, "model": model, "prompt": userText, "answer": answer})
 		return doneMsg{text: answer, note: "↳ " + strings.Join(notes, " · "), ptok: promptTok, ctok: complTok, usd: turnUSD, ctx: promptTok, ctxB: budget, calls: turnCalls, oks: toolOK, fails: toolFail, work: workOK, agent: len(allowed) > 0, mode: mode}
 	}
 	return tea.Batch(spinCmd, turn)

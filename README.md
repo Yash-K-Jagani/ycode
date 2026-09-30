@@ -30,13 +30,14 @@ and refactor code through a real agent tool loop.
 10. [RAG, cache & router intelligence](#10-rag-cache--router-intelligence)
 11. [Skills, plugins, MCP, hooks, prompts](#11-skills-plugins-mcp-hooks-prompts)
 12. [Security & privacy](#12-security--privacy)
-13. [Configuration reference](#13-configuration-reference)
-14. [Project structure](#14-project-structure)
-15. [Data layout](#15-data-layout)
-16. [Development](#16-development)
-17. [Releases & CI](#17-releases--ci)
-18. [Troubleshooting](#18-troubleshooting)
-19. [License](#19-license)
+13. [By the numbers](#13-by-the-numbers)
+14. [Configuration reference](#14-configuration-reference)
+15. [Project structure](#15-project-structure)
+16. [Data layout](#16-data-layout)
+17. [Development](#17-development)
+18. [Releases & CI](#18-releases--ci)
+19. [Troubleshooting](#19-troubleshooting)
+20. [License](#20-license)
 
 ---
 
@@ -162,6 +163,7 @@ No Ollama at all? `/connect` → gemini/openrouter/groq → paste a key → pick
 - Type `/` for the **command palette**: filters as you type, `↑↓` to move, `Tab`/`Enter` to complete, `Enter` again to run, `Esc` to dismiss.
 - `Ctrl+O` cycles installed Ollama models; `Ctrl+N` new session; `Ctrl+P` command palette; `Ctrl+R` resume a session; `Ctrl+\` file tree; `Ctrl+=` compact mode; `Tab`/`Shift+Tab` cycle modes; `Ctrl+C` cancels; `Ctrl+D` quits. Full list: `docs/shortcuts.md`.
 - Every turn streams token-by-token; tool calls show as `🔧` lines; turn footers show token/cost/RAG notes.
+- **Long-running tools stream live.** `bash`, `run`, `testgen` and `notebook` show their output while they run, so a five-minute test suite is visibly progressing instead of looking like a hang. The live block is provisional and bounded — it is replaced wholesale on each update and dropped when the call finishes, because the complete output arrives then as a permanent card. Output is batched into the UI at ~16 Hz, so a build that prints ten thousand lines does not turn the terminal into a CPU spinner. Headless runs write the same chunks to their log, which is what keeps a CI job from looking hung.
 - Codebase-aware: every build/plan/goal turn sees the repo tree, README head, `AGENTS.md` rules, and git branch/status — plus `edit` tolerates `12: ` line prefixes and suggests close matches on miss.
 
 ---
@@ -211,6 +213,7 @@ exited 0.
 | `/sessions` | List (auto-titled); resume, `fork <id>`, `search <q>`, `prune [N] [--yes]` |
 | `/export [file]` | Save transcript as markdown |
 | `/status` | Mode, tokens, cost today, cache hits, RAG index, latency |
+| `/budget [usd]` | Show the daily spend limit and today's spend, or set it (`/budget 1.50`, `/budget 0` for none). Turns are refused once the limit is reached |
 | `/connect` | Interactive window: provider → API key/host → model picker |
 | `/doctor` | Health check: tools, Ollama, RAG, cache, model advice |
 | `/agent [name]` | Pick builder/planner/reviewer |
@@ -300,6 +303,11 @@ gate) `github` (clone/PRs/issues, `owner/repo` shorthand) `browser`
 `todo` `memory` `patch` `run` (execute code: python/js/ts/go/bash/powershell/ruby/php/java/rust) `delete` (guarded) `summary` `db` (mongo/postgres/mysql) `notebook` `api` (REST) `vscode` `scaffold` (react/express/fastapi) `models` (gguf) — plus dynamic `mcp__*` and `plugin__*` tools.
 Chat code blocks get Chroma syntax highlighting with line numbers; write/edit results show red/green diffs. File reads/writes show path cards; shell commands their own tint.
 
+Streaming tools (`bash`, `run`, `testgen`, `notebook`) additionally put their
+output in the transcript on completion, capped at 4 KB of the tail — the end is
+where a build log explains itself. Tools that do not stream are unchanged: a
+`read` result is a file, and putting one in the transcript uninvited is noise.
+
 Models emit `<tool:name>{json}</tool:name>` (tolerant parser, schema-error
 retries, repeat-guard with cached results, 6-round cap in plan, 8 in build, 16
 in goal). Small local models
@@ -362,7 +370,84 @@ work; 3b+ coders follow instructions far better than 1–2b ones.
 
 ---
 
-## 13. Configuration reference
+## 13. By the numbers
+
+Every figure here is measured, not estimated, and the benchmark or test that
+produces it is named. Where a change made something faster, the before and after
+are both given — a speedup with only the "after" is marketing.
+
+### Size
+
+| Metric | Value |
+| --- | --- |
+| Packages | 47 |
+| Go source | 20,516 lines across 127 files |
+| Go tests | 17,773 lines across 122 files |
+| Test functions | 693 |
+| Benchmarks | 16 |
+| Test-to-source ratio | 0.87 |
+| Registered tools | 28 built-ins |
+| Slash commands | 29 |
+| Providers | 4 (1 local, 3 cloud) |
+| Commits | 118 |
+
+Test lines are close to source lines on purpose. Most of what is here is
+behaviour that is invisible until it breaks: a provider that returns HTML, a
+context trim that corrupts history, a fallback that splices two responses
+together.
+
+### Measured performance
+
+Each of these was a specific fix to something slow, with the before and after
+recorded at the time.
+
+| Change | Before | After | Speedup |
+| --- | --- | --- | --- |
+| TUI renders while streaming (500 tokens) | 8.17 s | 27.6 ms | ~296× |
+| Context trim, 1,000 messages | 2.4 s | 30 ms | ~80× |
+| Session listing (1,000 sessions) | 167 ms | 0.86 ms | ~196× |
+| Six read-only tool calls in parallel | 123.6 ms | 21 ms | ~5.9× |
+| Transcript render, one message | 1.0 ms | 0.031 ms | ~32× |
+
+The parallel tool figure is the smallest of the five and the most surprising:
+6 read calls were serialised, because the concurrency classifier existed and
+nothing consulted it.
+
+### Live tool output
+
+Reproduce with `go test -run '^$' -bench ToolChunk ./internal/tui/` on a
+13th-gen i5.
+
+| Operation | Time | Allocated |
+| --- | --- | --- |
+| One chunk, handled and rendered | 231 µs | 52.8 KB, 159 allocs |
+| 50 lines as 50 separate chunks | 9.64 ms | 2.20 MB, 7,556 allocs |
+| The same 50 lines as one batched chunk | 455 µs | 332 KB, 219 allocs |
+
+231 µs per chunk is the number that shapes the design. At that cost a build
+printing a thousand lines a second cannot be streamed one line at a time — it
+would spend a quarter of a second of CPU per line and allocate megabytes per
+second for nothing. Batching is a **21× speedup and 6.6× less memory** on
+identical output, and the gate that does it drops no bytes: a gap in the middle
+of a build log is worse than a late one.
+
+### What is not measured
+
+- **No end-to-end latency numbers against live providers.** Everything here is
+  local, synthetic, and reproducible in CI. Cloud latency is the provider's, not
+  ycode's, and quoting it would say nothing.
+- **`go test -race` does not run locally.** The toolchain here is 32-bit MinGW
+  (`gcc -dumpmachine` → `mingw32`), and `race` needs 64-bit: `cc1.exe: sorry,
+  unimplemented: 64-bit mode not compiled in`. The race detector runs in CI
+  instead, which is where it belongs anyway.
+- **Headless turns are not metered for cost.** The router does not surface
+  per-turn token counts, so `daily_budget_usd` bounds recorded spend and a
+  session that only runs `ycode -p` accumulates nothing. Called out in the
+  budget documentation rather than left to be discovered.
+
+---
+
+## 14. Configuration reference
 
 `~/.ycode/config.yaml` (user) + `<project>/.ycode/config.yaml` (overrides;
 see `configs/ycode.yaml` for defaults):
@@ -383,9 +468,14 @@ Other files: `mcp.json`, `hooks.yaml`, `webhooks.yaml`,
 `automations.yaml` (`automations: [{name, prompt, mode, interval_minutes}]`),
 `prompts/`, `skills/`, `plugins/` — all under `~/.ycode/`.
 
+`ycode config set` validates before it writes, and nothing is saved when a value
+is rejected — a bad value used to print a complaint and then write the file
+anyway. A leading `-` is read by the flag parser rather than as a value, so a
+negative number needs `--`: `ycode config set daily_budget_usd -- -1`.
+
 ---
 
-## 14. Project structure
+## 15. Project structure
 
 ```
 cmd/ycode/main.go            # CLI: TUI + run/serve/batch/ci/daemon/audit/version
@@ -407,7 +497,7 @@ api/openapi.yaml  configs/  docs/  scripts/  .github/workflows/
 
 ---
 
-## 15. Data layout
+## 16. Data layout
 
 ```
 ~/.ycode/
@@ -420,7 +510,7 @@ api/openapi.yaml  configs/  docs/  scripts/  .github/workflows/
 
 ---
 
-## 16. Development
+## 17. Development
 
 ```sh
 go build ./...   # build
@@ -434,7 +524,7 @@ Conventions: small focused packages, table-less unit tests per package,
 
 ---
 
-## 17. Releases & CI
+## 18. Releases & CI
 
 - `.goreleaser.yaml`: `ycode_<os>_<arch>.tar.gz` for linux/darwin and
   `ycode_<os>_<arch>.zip` for windows, × amd64/arm64, plus `checksums.txt`.
@@ -474,7 +564,7 @@ Conventions: small focused packages, table-less unit tests per package,
 
 ---
 
-## 18. Troubleshooting
+## 19. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -492,6 +582,6 @@ Run `/doctor` inside the TUI for a guided health check.
 
 ---
 
-## 19. License
+## 20. License
 
 MIT — see `LICENSE`. Plan/architecture source of truth: `plan.md`.

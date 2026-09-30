@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -71,8 +72,15 @@ func configSetCmd() *cobra.Command {
 				fmt.Println("config error:", err)
 				return
 			}
-			if !applyConfigValue(&cfg, key, val) {
-				fmt.Fprintf(os.Stderr, "unknown key %q (known keys: %s)\n", key, strings.Join(configKeys(), ", "))
+			if err := applyConfigValue(&cfg, key, val); err != nil {
+				// Nothing is written on any failure path. Saving anyway would
+				// leave a config that disagrees with what the user was told,
+				// which is worse than leaving it untouched.
+				if errors.Is(err, errUnknownConfigKey) {
+					fmt.Fprintf(os.Stderr, "unknown key %q (known keys: %s)\n", key, strings.Join(configKeys(), ", "))
+				} else {
+					fmt.Fprintln(os.Stderr, err)
+				}
 				os.Exit(1)
 			}
 			if err := cfg.Save(); err != nil {
@@ -174,12 +182,20 @@ func providerFromConfigKey(key string) (string, bool) {
 
 // applyConfigValue writes val into the named config field, reporting whether
 // the key was recognised.
-func applyConfigValue(c *config.Config, key, val string) bool {
+// applyConfigValue writes val into the named config field.
+//
+// It returns nil when the value was applied, an error when the key is not one it
+// knows, and an error with a written message when the key is known but the value
+// is invalid. All three are errors, deliberately: an earlier version returned a
+// bare bool meaning "recognised", and the caller treated that as success and
+// saved anyway - so `ycode config set zero_data_leak maybe` printed a complaint
+// and then wrote the file and echoed the bad value back as though it had worked.
+func applyConfigValue(c *config.Config, key, val string) error {
 	// Every provider's API key follows the same naming rule, so the key goes
 	// to whichever provider owns it rather than to a fixed set of fields.
 	if provider, ok := providerFromConfigKey(key); ok {
 		c.SetKeyFor(provider, val)
-		return true
+		return nil
 	}
 	switch key {
 	case "active_provider":
@@ -193,29 +209,33 @@ func applyConfigValue(c *config.Config, key, val string) bool {
 	case "zero_data_leak":
 		b, err := strconv.ParseBool(val)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "zero_data_leak expects true or false, got %q\n", val)
-			return true // recognised, just invalid; do not claim "unknown key"
+			return fmt.Errorf("zero_data_leak expects true or false, got %q", val)
 		}
 		c.ZeroDataLeak = b
 	case "daily_budget_usd":
-		// Parsed as a float and validated here rather than at the point of
+		// Parsed and range-checked here rather than at the point of
 		// enforcement, so a typo is a message at the moment it was typed
-		// instead of a limit that silently never fires.
+		// instead of a limit that silently never fires. Storing 0 for an
+		// unparseable value would be the worst outcome: the user believes they
+		// have capped their spending and have instead removed the cap.
 		v, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "daily_budget_usd expects a number of dollars, got %q\n", val)
-			return true
+			return fmt.Errorf("daily_budget_usd expects a number of dollars, got %q", val)
 		}
 		if v < 0 {
-			fmt.Fprintf(os.Stderr, "daily_budget_usd cannot be negative, got %v (use 0 for no limit)\n", v)
-			return true
+			return fmt.Errorf("daily_budget_usd cannot be negative, got %v (use 0 for no limit)", v)
 		}
 		c.DailyBudgetUSD = v
 	default:
-		return false
+		return errUnknownConfigKey
 	}
-	return true
+	return nil
 }
+
+// errUnknownConfigKey distinguishes "no such setting" from "bad value for this
+// setting", so the caller can print the list of valid keys only when the list
+// would actually help.
+var errUnknownConfigKey = errors.New("unknown config key")
 
 // setupCmd re-runs the onboarding wizard at any time.
 func setupCmd() *cobra.Command {

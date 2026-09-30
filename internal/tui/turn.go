@@ -155,7 +155,26 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		// so the final delta is queued ahead of the completion message and the
 		// transcript never briefly shows a truncated answer.
 		defer w.Flush()
+		// Live tool output.
+		//
+		// Until now a streaming tool's progress went nowhere: the agent loop
+		// called t.Run unconditionally, so a four-minute test suite reported
+		// nothing for four minutes. On a TUI that is indistinguishable from a
+		// hang, and the natural reaction to a hang is to cancel work that was
+		// about to finish.
+		//
+		// The gate batches what the process prints into at most one message per
+		// chunkInterval, so a build that prints ten thousand lines cannot turn
+		// the terminal into a CPU spinner - which is the failure this whole
+		// change exists to avoid.
+		//
+		// It is created before onTool so that finishing a tool can flush it.
+		gate := newChunkGate(prog)
 		onTool := func(name, args, result string, err error) {
+			// Push the last of this tool's output before its completion card.
+			// Without the flush the final lines sit in the gate waiting for an
+			// interval that will not come, and the live view drops them.
+			gate.flush()
 			toolCalls++
 			if err == nil {
 				toolOK++
@@ -185,7 +204,26 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 				prog.Send(fileOpMsg{op: name, path: writeOpPath(args), detail: status, diff: extractDiff(result), ok: err == nil})
 				return
 			}
-			prog.Send(toolMsg(fmt.Sprintf("🔧 %s %s → %s", name, truncateArgs(args), status)))
+			prog.Send(toolMsg{
+				name:   name,
+				status: status,
+				// The output, but only for tools that stream: those are the ones
+				// whose output is the reason someone ran them, and they are
+				// already bounded by the tool's own cap. A read tool's output is
+				// a file, and putting that in the transcript uninvited is a
+				// different change with a different justification.
+				out: streamedOutput(tools.CanStream(reg, name), result),
+			})
+		}
+		// The gate batches what the process prints into at most one message per
+		// chunkInterval, so a build that prints ten thousand lines cannot turn
+		// the terminal into a CPU spinner - which is the failure this whole
+		// change exists to avoid.
+		obs := &agent.Observer{
+			OnTool: onTool,
+			OnChunk: func(name, chunk string) {
+				gate.emit(name, chunk)
+			},
 		}
 		p, model, err := m.router.Active()
 		if err != nil {
@@ -282,7 +320,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 			}
 			// One chain implementation, shared with the headless paths, so a
 			// fallback means the same thing in a TUI turn and a CI run.
-			res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, w, onTool, rounds, string(mode),
+			res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, w, obs, rounds, string(mode),
 				func(label string) {
 					if prog != nil {
 						prog.Send(resetStreamMsg{})
@@ -308,7 +346,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 						if prog != nil {
 							prog.Send(sysMsg("↳ ran it as a tool instead…"))
 						}
-						results := agent.Exec(ctx, reg, allowed, hookset, conv, onTool)
+						results := agent.Exec(ctx, reg, allowed, hookset, conv, obs)
 						turnCalls += len(conv)
 						okAll := true
 						var parts []string
@@ -350,7 +388,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 					retryMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: retryNudge})
-					res2, err2 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, retryMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
+					res2, err2 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, retryMsgs, reg, allowed, hookset, w, obs, rounds, string(mode))
 					turnCalls += res2.Calls
 					if turnCalls > callsBefore && (err2 == nil || res2.Text != "") {
 						answer = res2.Text
@@ -371,7 +409,7 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 					vRFMsgs := append(append([]apitypes.Message(nil), msgs...),
 						apitypes.Message{Role: apitypes.RoleAssistant, Content: answer},
 						apitypes.Message{Role: apitypes.RoleSystem, Content: verifyFact(fails)})
-					res3, err3 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, vRFMsgs, reg, allowed, hookset, w, onTool, rounds, string(mode))
+					res3, err3 := agent.RunWithRounds(ctx, res.Winner.Provider, res.Winner.Model, vRFMsgs, reg, allowed, hookset, w, obs, rounds, string(mode))
 					turnCalls += res3.Calls
 					if turnCalls > vCallsBefore && (err3 == nil || res3.Text != "") {
 						answer = res3.Text

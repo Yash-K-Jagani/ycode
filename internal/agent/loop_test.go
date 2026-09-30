@@ -71,7 +71,9 @@ func TestLoopExecutesTools(t *testing.T) {
 	res, err := Run(context.Background(), p, "fake-1",
 		[]apitypes.Message{{Role: apitypes.RoleUser, Content: "hi"}},
 		reg, []string{"echo"}, nil, io.Discard,
-		func(name, args, result string, err error) { toolEvents = append(toolEvents, name+"="+result) })
+		&Observer{OnTool: func(name, args, result string, err error) {
+			toolEvents = append(toolEvents, name+"="+result)
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,11 +178,11 @@ func TestRepeatGuard(t *testing.T) {
 	res, err := Run(context.Background(), p, "fake-1",
 		[]apitypes.Message{{Role: apitypes.RoleUser, Content: "hi"}},
 		reg, []string{"echo"}, nil, io.Discard,
-		func(name, args, result string, err error) {
+		&Observer{OnTool: func(name, args, result string, err error) {
 			if !strings.Contains(result, "already called") {
 				execs++
 			}
-		})
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +251,7 @@ func TestExecDirect(t *testing.T) {
 	var events []string
 	res := Exec(context.Background(), reg, []string{"echo"}, nil,
 		[]Call{{Name: "echo", Args: json.RawMessage(`{"x":1}`)}},
-		func(name, args, result string, err error) { events = append(events, name) })
+		&Observer{OnTool: func(name, args, result string, err error) { events = append(events, name) }})
 	if len(res) != 1 || !strings.Contains(res[0], "ECHO:") {
 		t.Fatalf("%v", res)
 	}

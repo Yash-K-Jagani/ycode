@@ -118,7 +118,7 @@ func TestExecKeepsToolOutput(t *testing.T) {
 	reg, allowed := regWith(failTool{out: "stderr detail here"})
 	results := Exec(context.Background(), reg, allowed, nil,
 		[]Call{{Name: "boom", Args: json.RawMessage(`{}`)}},
-		func(name, args, result string, err error) {})
+		&Observer{OnTool: func(name, args, result string, err error) {}})
 	if len(results) != 1 {
 		t.Fatalf("results = %v", results)
 	}

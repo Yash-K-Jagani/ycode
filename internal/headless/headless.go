@@ -208,12 +208,21 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 			chain = append(chain, agent.Candidate{Provider: fp, Model: fb.Model, Label: fb.Provider + "/" + fb.Model})
 		}
 	}
-	res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
-		status := "ok"
-		if err != nil {
-			status = "ERR " + err.Error()
-		}
-		_, _ = fmt.Fprintf(log, "[tool %s] %s\n", name, status)
+	res := agent.RunChain(ctx, chain, msgs, reg, allowed, hookset, log, &agent.Observer{
+		OnTool: func(name, args, result string, err error) {
+			status := "ok"
+			if err != nil {
+				status = "ERR " + err.Error()
+			}
+			_, _ = fmt.Fprintf(log, "[tool %s] %s\n", name, status)
+		},
+		// Tool output as it happens, on the same stream the assistant's text
+		// already uses. A CI log that goes silent for the four minutes a test
+		// suite takes is indistinguishable from a hung job, and the person
+		// watching has no way to tell those apart.
+		OnChunk: func(name, chunk string) {
+			_, _ = fmt.Fprintf(log, "[%s] %s", name, chunk)
+		},
 	}, modes.Rounds(o.Mode), string(o.Mode), func(label string) {
 		_, _ = fmt.Fprintf(log, "retrying turn on fallback %s\n", label)
 	})
@@ -305,14 +314,19 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 			}
 		}
 		workOK := 0
-		chainRes := agent.RunChain(ctx, chain, turnMsgs, reg, allowed, hookset, log, func(name, args, result string, err error) {
-			status := "ok"
-			if err != nil {
-				status = "ERR " + err.Error()
-			} else if goal.IsWorkTool(name) {
-				workOK++
-			}
-			_, _ = fmt.Fprintf(log, "[goal %d/%d tool %s] %s\n", g.Iter+1, g.MaxIter, name, status)
+		chainRes := agent.RunChain(ctx, chain, turnMsgs, reg, allowed, hookset, log, &agent.Observer{
+			OnTool: func(name, args, result string, err error) {
+				status := "ok"
+				if err != nil {
+					status = "ERR " + err.Error()
+				} else if goal.IsWorkTool(name) {
+					workOK++
+				}
+				_, _ = fmt.Fprintf(log, "[goal %d/%d tool %s] %s\n", g.Iter+1, g.MaxIter, name, status)
+			},
+			OnChunk: func(name, chunk string) {
+				_, _ = fmt.Fprintf(log, "[goal %d/%d %s] %s", g.Iter+1, g.MaxIter, name, chunk)
+			},
 		}, rounds, string(o.Mode), func(label string) {
 			_, _ = fmt.Fprintf(log, "[goal %d/%d] retrying on fallback %s\n", g.Iter+1, g.MaxIter, label)
 		})

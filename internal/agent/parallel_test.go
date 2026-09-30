@@ -92,7 +92,7 @@ func TestConcurrentToolsActuallyOverlap(t *testing.T) {
 		{Name: "read", Args: argsFor("b")},
 		{Name: "read", Args: argsFor("c")},
 	}
-	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{})
+	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{}, nil)
 	if len(got) != 3 {
 		t.Fatalf("got %d outcomes", len(got))
 	}
@@ -122,7 +122,7 @@ func TestResultsKeepTheOrderTheModelWroteThem(t *testing.T) {
 		{Name: "b", Args: argsFor("second")},
 		{Name: "c", Args: argsFor("third")},
 	}
-	got := executeCalls(context.Background(), reg, allow("a", "b", "c"), nil, "build", calls, map[string]string{})
+	got := executeCalls(context.Background(), reg, allow("a", "b", "c"), nil, "build", calls, map[string]string{}, nil)
 	want := []string{"first", "second", "third"}
 	for i := range want {
 		if !strings.Contains(got[i].res, want[i]) {
@@ -163,7 +163,7 @@ func TestAWriteBetweenTwoReadsStillRunsBetweenThem(t *testing.T) {
 		{Name: "write", Args: argsFor("mid")},
 		{Name: "read", Args: argsFor("after")},
 	}
-	got := executeCalls(context.Background(), reg, allow("read", "write"), nil, "build", calls, map[string]string{})
+	got := executeCalls(context.Background(), reg, allow("read", "write"), nil, "build", calls, map[string]string{}, nil)
 
 	if got[0].res != "saw:original" {
 		t.Fatalf("the first read saw %q, want the original value", got[0].res)
@@ -199,7 +199,7 @@ func TestConsecutiveReadsWithNoWriteStillOverlap(t *testing.T) {
 		{Name: "read", Args: argsFor("b")},
 		{Name: "read", Args: argsFor("c")},
 	}
-	executeCalls(context.Background(), reg2, allow("read"), nil, "build", calls, map[string]string{})
+	executeCalls(context.Background(), reg2, allow("read"), nil, "build", calls, map[string]string{}, nil)
 	if counted.peakConcurrency() < 2 {
 		t.Fatalf("peak concurrency %d; consecutive reads did not overlap", counted.peakConcurrency())
 	}
@@ -221,7 +221,7 @@ func TestNonConcurrentToolRunsAlone(t *testing.T) {
 		{Name: "write", Args: argsFor("w")},
 		{Name: "read", Args: argsFor("b")},
 	}
-	executeCalls(context.Background(), reg, allow("read", "write"), nil, "build", calls, map[string]string{})
+	executeCalls(context.Background(), reg, allow("read", "write"), nil, "build", calls, map[string]string{}, nil)
 
 	if writer.peakConcurrency() != 1 {
 		t.Fatalf("the write peaked at %d; it must run alone", writer.peakConcurrency())
@@ -243,7 +243,7 @@ func TestDuplicateCallsInOneMessageRunOnce(t *testing.T) {
 		{Name: "read", Args: argsFor("same")},
 		{Name: "read", Args: argsFor("same")},
 	}
-	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{})
+	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{}, nil)
 	if runs != 1 {
 		t.Fatalf("the tool ran %d times, want 1", runs)
 	}
@@ -262,7 +262,7 @@ func TestAlreadyCachedCallIsNotExecuted(t *testing.T) {
 	reg.AddWith(counting{name: "read", runs: &runs}, true, true)
 	cached := map[string]string{callKey(Call{Name: "read", Args: argsFor("same")}): "earlier answer"}
 	got := executeCalls(context.Background(), reg, allow("read"), nil, "build",
-		[]Call{{Name: "read", Args: argsFor("same")}}, cached)
+		[]Call{{Name: "read", Args: argsFor("same")}}, cached, nil)
 	if runs != 0 {
 		t.Fatalf("a cached call was executed %d times", runs)
 	}
@@ -282,7 +282,7 @@ func TestErrorsSurviveParallelExecution(t *testing.T) {
 		{Name: "read", Args: argsFor("a")},
 		{Name: "read", Args: argsFor("b")},
 	}
-	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{})
+	got := executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{}, nil)
 	for i, o := range got {
 		if o.err == nil {
 			t.Fatalf("outcome %d lost its error", i)
@@ -302,7 +302,7 @@ func TestSingleCallRunsInline(t *testing.T) {
 	reg := tools.NewRegistry()
 	reg.AddWith(r, true, true)
 	got := executeCalls(context.Background(), reg, allow("read"), nil, "build",
-		[]Call{{Name: "read", Args: argsFor("only")}}, map[string]string{})
+		[]Call{{Name: "read", Args: argsFor("only")}}, map[string]string{}, nil)
 	if len(got) != 1 || !strings.Contains(got[0].res, "only") {
 		t.Fatalf("got %+v", got)
 	}
@@ -312,7 +312,7 @@ func TestSingleCallRunsInline(t *testing.T) {
 }
 
 func TestEmptyCallList(t *testing.T) {
-	got := executeCalls(context.Background(), tools.NewRegistry(), nil, nil, "build", nil, map[string]string{})
+	got := executeCalls(context.Background(), tools.NewRegistry(), nil, nil, "build", nil, map[string]string{}, nil)
 	if len(got) != 0 {
 		t.Fatalf("got %d outcomes", len(got))
 	}
@@ -331,7 +331,7 @@ func TestParallelismIsCapped(t *testing.T) {
 	for i := range calls {
 		calls[i] = Call{Name: "read", Args: argsFor(fmt.Sprint(i))}
 	}
-	executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{})
+	executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{}, nil)
 	if p := r.peakConcurrency(); p > maxParallelTools {
 		t.Fatalf("peak concurrency %d exceeds the cap of %d", p, maxParallelTools)
 	}
@@ -354,7 +354,7 @@ func TestCancellationDoesNotHang(t *testing.T) {
 	go func() {
 		defer close(done)
 		executeCalls(ctx, reg, allow("read"), nil, "build",
-			[]Call{{Name: "read", Args: argsFor("x")}}, map[string]string{})
+			[]Call{{Name: "read", Args: argsFor("x")}}, map[string]string{}, nil)
 	}()
 	select {
 	case <-done:
@@ -397,7 +397,7 @@ func TestParallelStressKeepsOutcomesAligned(t *testing.T) {
 			}
 		}
 		got := executeCalls(context.Background(), reg, allow("r0", "r1", "r2", "w"), nil, "build",
-			calls, map[string]string{})
+			calls, map[string]string{}, nil)
 		if len(got) != len(calls) {
 			t.Fatalf("round %d: %d outcomes for %d calls", round, len(got), len(calls))
 		}
@@ -431,7 +431,7 @@ func BenchmarkExecuteCalls(b *testing.B) {
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{})
+				executeCalls(context.Background(), reg, allow("read"), nil, "build", calls, map[string]string{}, nil)
 			}
 		})
 	}

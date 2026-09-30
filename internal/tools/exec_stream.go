@@ -15,11 +15,15 @@ import (
 //
 // Several tools run a command and show what it printed: bash, run, testgen,
 // notebook. All of them used to call cmd.CombinedOutput, which buffers the whole
-// thing and returns it at the end, so a three-minute test run was indistinguishable
+// thing and returns it at the end, so a five-minute test run was indistinguishable
 // from a hang. This is the machinery that lets them report as they go, kept in
 // one place because getting it right - capping what is retained without capping
 // what is shown, interleaving two pipes without losing either, not deadlocking
-// when one pipe fills - is subtle enough not to repeat five times.
+// when one pipe fills - is subtle enough not to repeat four times.
+//
+// Note that a tool only streams if it has a Stream method AND the caller passes
+// a sink. A tool using execStream with a nil emit behaves exactly like the old
+// CombinedOutput call, which is what Run does.
 
 // waitDelay bounds how long Wait may block after the context has already been
 // cancelled.

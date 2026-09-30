@@ -62,6 +62,20 @@ func (RunTool) Schema() string {
 }
 
 func (t *RunTool) Run(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.run(ctx, args, nil)
+}
+
+// Stream runs the tool, reporting output as it is produced.
+//
+// Running a script is one of the places where silence looks worst: the
+// interpreter can be compiling, downloading, or waiting on something the user
+// cannot see, for minutes. execStream gives the same retained output Run would
+// have returned, so a caller that ignores the sink is unaffected.
+func (t *RunTool) Stream(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
+	return t.run(ctx, args, emit)
+}
+
+func (t *RunTool) run(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
 	var a struct {
 		Language string `json:"language"`
 		Code     string `json:"code"`
@@ -111,30 +125,30 @@ func (t *RunTool) Run(ctx context.Context, args json.RawMessage) (string, error)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if lang == "rust" {
-		return runRust(ctx, t.Workdir, file)
+		return runRust(ctx, t.Workdir, file, emit)
 	}
 	argv := spec.build(file)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if t.Workdir != "" {
 		cmd.Dir = t.Workdir
 	}
-	out, err := cmd.CombinedOutput()
-	if len(out) > maxOutBytes {
-		out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
-	}
+	res := execStream(ctx, cmd, emit, maxOutBytes)
 	if ctx.Err() == context.DeadlineExceeded {
-		return string(out), fmt.Errorf("timeout after %s", timeout)
+		return string(res.out), fmt.Errorf("timeout after %s", timeout)
 	}
-	if err != nil {
-		return string(out), fmt.Errorf("exit error: %v", err)
+	if res.err != nil {
+		return string(res.out), fmt.Errorf("exit error: %v", res.err)
 	}
-	if len(out) == 0 {
+	if len(res.out) == 0 {
 		return "(no output)", nil
 	}
-	return string(out), nil
+	return string(res.out), nil
 }
 
-func runRust(ctx context.Context, workdir, file string) (string, error) {
+// runRust compiles and runs a Rust file. Both phases stream: the compile is the
+// slow one on a cold target directory, and rustc's diagnostics are the output
+// people actually need to see.
+func runRust(ctx context.Context, workdir, file string, emit func(string)) (string, error) {
 	dir, err := os.MkdirTemp("", "ycode-rust-*")
 	if err != nil {
 		return "", err
@@ -145,22 +159,19 @@ func runRust(ctx context.Context, workdir, file string) (string, error) {
 		bin += ".exe"
 	}
 	build := exec.CommandContext(ctx, "rustc", "-O", "-o", bin, file)
-	if out, err := build.CombinedOutput(); err != nil {
-		return string(out), fmt.Errorf("compile error: %v", err)
+	if res := execStream(ctx, build, emit, maxOutBytes); res.err != nil {
+		return string(res.out), fmt.Errorf("compile error: %v", res.err)
 	}
 	run := exec.CommandContext(ctx, bin)
 	if workdir != "" {
 		run.Dir = workdir
 	}
-	out, err := run.CombinedOutput()
-	if len(out) > maxOutBytes {
-		out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
+	res := execStream(ctx, run, emit, maxOutBytes)
+	if res.err != nil {
+		return string(res.out), fmt.Errorf("exit error: %v", res.err)
 	}
-	if err != nil {
-		return string(out), fmt.Errorf("exit error: %v", err)
-	}
-	if len(out) == 0 {
+	if len(res.out) == 0 {
 		return "(no output)", nil
 	}
-	return string(out), nil
+	return string(res.out), nil
 }

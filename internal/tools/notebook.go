@@ -31,6 +31,18 @@ type nbCell struct {
 }
 
 func (t *NotebookTool) Run(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.run(ctx, args, nil)
+}
+
+// Stream executes a notebook, reporting jupyter's output as it is produced.
+//
+// Only the execute action streams; reading cells returns immediately and has
+// nothing to report. The returned output is unchanged.
+func (t *NotebookTool) Stream(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
+	return t.run(ctx, args, emit)
+}
+
+func (t *NotebookTool) run(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
 	var a struct {
 		Action string `json:"action"`
 		Path   string `json:"path"`
@@ -83,14 +95,11 @@ func (t *NotebookTool) Run(ctx context.Context, args json.RawMessage) (string, e
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "jupyter", "nbconvert", "--to", "notebook", "--execute",
 			"--stdout", "--allow-errors", p)
-		out, err := cmd.CombinedOutput()
-		if len(out) > maxOutBytes {
-			out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
+		res := execStream(ctx, cmd, emit, maxOutBytes)
+		if res.err != nil {
+			return string(res.out), fmt.Errorf("execute failed: %v", res.err)
 		}
-		if err != nil {
-			return string(out), fmt.Errorf("execute failed: %v", err)
-		}
-		return fmt.Sprintf("executed ok (%d bytes of notebook JSON returned)", len(out)), nil
+		return fmt.Sprintf("executed ok (%d bytes of notebook JSON returned)", len(res.out)), nil
 	default:
 		return "", fmt.Errorf("unknown notebook action %q", a.Action)
 	}

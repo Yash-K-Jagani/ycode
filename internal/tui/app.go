@@ -73,6 +73,16 @@ type Model struct {
 	// message is given once at the crossing rather than on every turn after it.
 	budgetWarned bool
 
+	// liveTool is the tool currently streaming output, and liveBuf the tail of
+	// what it has printed so far.
+	//
+	// It is rendered as a provisional tail rather than appended to the
+	// transcript, because the transcript is permanent and this is not: the same
+	// output arrives again, complete, when the call finishes. Appending here and
+	// appending again on completion would show a command's output twice.
+	liveTool string
+	liveBuf  []byte
+
 	// side holds the sidebar's disk-backed values. The sidebar is rendered on
 	// every message, and bubbletea sends one per streamed token, so reading the
 	// todo file and the batch queue there meant two file/SQLite reads per
@@ -169,7 +179,25 @@ type reviewPostDone struct {
 }
 type errMsg struct{ err error }
 type sysMsg string
-type toolMsg string
+
+// toolMsg is a finished tool call: the one-line status the transcript has always
+// shown, plus the output when there was any worth reading.
+//
+// The output used to be dropped. A bash call reported "ok (812 bytes)" and
+// never showed what the command printed, and for the tools people actually run
+// by hand that output is usually the entire point of running them.
+type toolMsg struct {
+	name   string
+	status string
+	out    string
+}
+
+// toolChunkMsg is one piece of a streaming tool's output, arriving while the
+// call is still in flight.
+type toolChunkMsg struct {
+	tool  string
+	chunk string
+}
 
 // fileOpMsg renders a file write/edit as a distinct card (filename on top).
 type fileOpMsg struct {
@@ -464,6 +492,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		preview := m.sr.update(m.stream.String(), renderAssistant, renderStreaming)
 		m.syncViewport(preview)
 		return m, nil
+	case toolChunkMsg:
+		if m.cancelled {
+			return m, nil
+		}
+		// A different tool name means the previous one finished without us being
+		// told, which happens when a turn is abandoned mid-call. Start clean
+		// rather than interleaving two commands' output into one block.
+		if m.liveTool != msg.tool {
+			m.liveTool = msg.tool
+			m.liveBuf = m.liveBuf[:0]
+		}
+		m.liveBuf = append(m.liveBuf, msg.chunk...)
+		if len(m.liveBuf) > maxLiveToolBytes {
+			// Keep the tail. For a build or a test run the end holds the answer,
+			// and the beginning is often thousands of lines of progress bars.
+			m.liveBuf = append(m.liveBuf[:0], m.liveBuf[len(m.liveBuf)-maxLiveToolBytes:]...)
+		}
+		m.syncViewport(m.livePreview())
+		return m, nil
 	case toolMsg:
 		if m.cancelled {
 			return m, nil
@@ -471,7 +518,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A tool result is the only thing in the TUI that can change the task
 		// list the sidebar shows, so this is where the cache is dropped.
 		m.invalidateSidebar()
-		m.appendSys(string(msg))
+		// Whatever was streaming is finished. The provisional block has to go
+		// before the permanent one goes in, or the same output appears twice.
+		m.clearLiveTool()
+		head := fmt.Sprintf("🔧 %s → %s", msg.name, msg.status)
+		if out := strings.TrimRight(msg.out, "\n"); out != "" {
+			// The command card rather than a sys line: output is multi-line and
+			// wants its own tinted block, or it drowns in the transcript.
+			m.appendCmdCard(cmdOpMsg{tool: msg.name, cmd: head, detail: capOutput(out), ok: true})
+			return m, nil
+		}
+		m.appendSys(head)
 		return m, nil
 	case fileOpMsg:
 		if m.cancelled {

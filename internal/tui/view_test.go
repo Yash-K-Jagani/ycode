@@ -125,7 +125,7 @@ func TestViewSurvivesEveryMessage(t *testing.T) {
 		toastExpireMsg{},
 		tea.WindowSizeMsg{Width: 100, Height: 30},
 		deltaMsg("thinking"),
-		toolMsg("wrote main.go"),
+		toolMsg{name: "write", status: "ok"},
 		sysMsg("note to self"),
 		doneMsg{mode: modes.Build, text: "done", calls: 1, oks: 1, work: 1},
 		errMsg{},

@@ -56,7 +56,7 @@ type callOutcome struct {
 //
 // cached is read here to decide what to skip, and written by the caller after
 // execution, so it is never touched from more than one goroutine.
-func executeCalls(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, calls []Call, cached map[string]string) []callOutcome {
+func executeCalls(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, calls []Call, cached map[string]string, obs *Observer) []callOutcome {
 	out := make([]callOutcome, len(calls))
 	i := 0
 	for i < len(calls) {
@@ -70,11 +70,11 @@ func executeCalls(ctx context.Context, reg *tools.Registry, allow map[string]boo
 		if n < minParallelRun {
 			// Zero means this call is not concurrent, one means a run too
 			// short to be worth the goroutine. Either way, inline.
-			out[i] = runOne(ctx, reg, allow, hk, mode, calls[i], cached)
+			out[i] = runOne(ctx, reg, allow, hk, mode, calls[i], cached, obs)
 			i++
 			continue
 		}
-		runParallel(ctx, reg, allow, hk, mode, calls[i:i+n], cached, out[i:i+n])
+		runParallel(ctx, reg, allow, hk, mode, calls[i:i+n], cached, out[i:i+n], obs)
 		i += n
 	}
 	return out
@@ -82,17 +82,17 @@ func executeCalls(ctx context.Context, reg *tools.Registry, allow map[string]boo
 
 // runOne executes a single call, or answers it from the cache if this exact
 // call has already been made.
-func runOne(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call, cached map[string]string) callOutcome {
+func runOne(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call, cached map[string]string, obs *Observer) callOutcome {
 	if _, dup := cached[callKey(c)]; dup {
 		return callOutcome{call: c, dup: true}
 	}
-	res, err := execCall(ctx, reg, allow, hk, mode, c)
+	res, err := execCall(ctx, reg, allow, hk, mode, c, obs)
 	return callOutcome{call: c, res: res, err: err}
 }
 
 // runParallel executes a run of concurrent-safe calls, writing the outcomes
 // into dst at the same indices so the order is preserved.
-func runParallel(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, calls []Call, cached map[string]string, dst []callOutcome) {
+func runParallel(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, calls []Call, cached map[string]string, dst []callOutcome, obs *Observer) {
 	var wg sync.WaitGroup
 	// A plain channel as a semaphore, rather than a worker pool: a worker pool
 	// needs a queue and a closer, and this is a bounded number of calls.
@@ -122,7 +122,7 @@ func runParallel(ctx context.Context, reg *tools.Registry, allow map[string]bool
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			res, err := execCall(ctx, reg, allow, hk, mode, c)
+			res, err := execCall(ctx, reg, allow, hk, mode, c, obs)
 			// Each goroutine writes its own index, so there is no shared
 			// state here at all.
 			dst[i] = callOutcome{call: c, res: res, err: err}

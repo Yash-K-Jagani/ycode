@@ -177,14 +177,60 @@ type Result struct {
 
 // Run executes the agentic loop: stream → parse tool calls → execute → feed back.
 // hk may be nil (no hooks).
-func Run(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, onTool func(name, args, result string, err error)) (Result, error) {
-	return RunWithRounds(ctx, p, model, msgs, reg, allowed, hk, w, onTool, MaxRounds, "")
+func Run(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, obs *Observer) (Result, error) {
+	return RunWithRounds(ctx, p, model, msgs, reg, allowed, hk, w, obs, MaxRounds, "")
 }
 
 // RunWithRounds is Run with a per-turn tool-round budget (rounds <= 0 falls
 // back to MaxRounds) and the mode name, passed to pre/post tool hooks.
 // Goal mode uses a larger budget: it runs unattended.
-func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, onTool func(name, args, result string, err error), rounds int, mode string) (Result, error) {
+// Observer receives progress from the tool loop.
+//
+// It replaced a bare `onTool func(name, args, result string, err error)`
+// parameter. That function was already the fifth of eleven positional
+// parameters, and live tool output needs a second callback with the same
+// lifetime and threading rules - a twelfth parameter of the same shape would
+// have been the fourth place a caller had to remember that progress reporting
+// exists at all.
+//
+// A nil *Observer is valid and means "report nothing", which is what every
+// caller that does not render progress passes. It is a pointer for that reason:
+// nil was the natural thing to write before, and forcing Observer{} at a dozen
+// call sites would have been churn to express nothing.
+type Observer struct {
+	// OnTool is called once per call, after it finishes, with its final result.
+	// It is called in the order the model wrote the calls, single threaded,
+	// even when execution itself was parallel.
+	OnTool func(name, args, result string, err error)
+
+	// OnChunk is called with each piece of output a streaming tool produces
+	// while it is still running, so a long test run or build shows progress
+	// instead of looking like a hang.
+	//
+	// Nil for callers that do not render progress, and the streaming path is
+	// skipped entirely then rather than allocating buffers nobody reads.
+	//
+	// Called from the goroutine running the tool, so several chunks for the
+	// same tool can be in flight at once and chunks from parallel tools
+	// interleave. A caller that forwards to a UI message loop is already
+	// serialised; anything else must synchronise itself.
+	OnChunk func(name, chunk string)
+}
+
+// tool reports a finished call, if anyone is listening.
+func (o *Observer) tool(name, args, result string, err error) {
+	if o == nil || o.OnTool == nil {
+		return
+	}
+	o.OnTool(name, args, result, err)
+}
+
+// streams reports whether live output should be captured for this tool.
+func (o *Observer) streams() bool { return o != nil && o.OnChunk != nil }
+
+// RunWithRounds runs the tool loop, reporting progress to obs. A nil obs reports
+// nothing.
+func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs []apitypes.Message, reg *tools.Registry, allowed []string, hk *hooks.Hooks, w io.Writer, obs *Observer, rounds int, mode string) (Result, error) {
 	if rounds <= 0 {
 		rounds = MaxRounds
 	}
@@ -241,12 +287,12 @@ func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs
 		repeated := false
 		// Execution is the only part that is parallel. Everything below -
 		// the repeat guard, the result cache, the injection scan, the order
-		// results are appended in, and the onTool callback - runs in the
+		// results are appended in, and the observer callbacks - run in the
 		// order the model wrote the calls, single threaded. That is what keeps
 		// the transcript identical to the serial implementation, which matters
 		// because a model reading a different order of its own results gives
 		// different answers.
-		outcomes := executeCalls(ctx, reg, allow, hk, mode, calls, cached)
+		outcomes := executeCalls(ctx, reg, allow, hk, mode, calls, cached, obs)
 		for _, o := range outcomes {
 			key := o.call.Name + "\x00" + string(o.call.Args)
 			counts[key]++
@@ -259,9 +305,7 @@ func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs
 				cached[key] = res
 				lastGood = "<tool_result:" + o.call.Name + ">" + res + "</tool_result:" + o.call.Name + ">"
 			}
-			if onTool != nil {
-				onTool(o.call.Name, string(o.call.Args), res, err)
-			}
+			obs.tool(o.call.Name, string(o.call.Args), res, err)
 			if err != nil {
 				failed++
 				// Keep whatever the tool managed to produce. Several tools
@@ -305,7 +349,7 @@ func RunWithRounds(ctx context.Context, p providers.Provider, model string, msgs
 	return Result{Text: answer, Rounds: rounds, Calls: totalCalls, OKs: succeeded, Failed: failed}, nil
 }
 
-func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call) (string, error) {
+func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, hk *hooks.Hooks, mode string, c Call, obs *Observer) (string, error) {
 	if !allow[c.Name] {
 		return "", fmt.Errorf("tool %q not allowed in this mode", c.Name)
 	}
@@ -343,7 +387,22 @@ func execCall(ctx context.Context, reg *tools.Registry, allow map[string]bool, h
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	out, err := t.Run(ctx, c.Args)
+	// The streaming path, when the tool has one and the caller is listening.
+	//
+	// Until now this was always t.Run, so RunWithSink and the Streamer interface
+	// existed and nothing ever called them: a three-minute test run reported
+	// nothing for three minutes, which reads as a hang and is why users cancel
+	// work that was nearly done. A nil sink keeps the old path exactly, so
+	// headless and the harness are unaffected.
+	var out string
+	var err error
+	if obs.streams() && tools.IsStreamer(t) {
+		out, err = tools.RunWithSink(ctx, t, c.Args, func(chunk string) {
+			obs.OnChunk(c.Name, chunk)
+		})
+	} else {
+		out, err = t.Run(ctx, c.Args)
+	}
 	if hk != nil {
 		status := "ok"
 		if err != nil {
@@ -384,17 +443,15 @@ func allowedNames(reg *tools.Registry, allow map[string]bool) []string {
 // Exec validates and runs calls once each (no loop, no caching) for
 // harness-driven execution (e.g. converted shell commands).
 // Returns per-call results (ERROR:-prefixed on failure, in order).
-func Exec(ctx context.Context, reg *tools.Registry, allowed []string, hk *hooks.Hooks, calls []Call, onTool func(name, args, result string, err error)) []string {
+func Exec(ctx context.Context, reg *tools.Registry, allowed []string, hk *hooks.Hooks, calls []Call, obs *Observer) []string {
 	allow := map[string]bool{}
 	for _, n := range allowed {
 		allow[n] = true
 	}
 	out := make([]string, 0, len(calls))
 	for _, c := range calls {
-		res, err := execCall(ctx, reg, allow, hk, "", c)
-		if onTool != nil {
-			onTool(c.Name, string(c.Args), res, err)
-		}
+		res, err := execCall(ctx, reg, allow, hk, "", c, obs)
+		obs.tool(c.Name, string(c.Args), res, err)
 		if err != nil {
 			res = toolError(err, res)
 		}

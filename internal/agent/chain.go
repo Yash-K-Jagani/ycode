@@ -83,7 +83,7 @@ func RunChain(
 	allowed []string,
 	hk *hooks.Hooks,
 	w io.Writer,
-	onTool func(name, args, result string, err error),
+	obs *Observer,
 	rounds int,
 	mode string,
 	onRetry func(label string),
@@ -97,7 +97,7 @@ func RunChain(
 		if i > 0 && onRetry != nil {
 			onRetry(cand.Label)
 		}
-		res, err := RunWithRounds(ctx, cand.Provider, cand.Model, msgs, reg, allowed, hk, w, onTool, rounds, mode)
+		res, err := RunWithRounds(ctx, cand.Provider, cand.Model, msgs, reg, allowed, hk, w, obs, rounds, mode)
 		out.Calls += res.Calls
 		out.Rounds += res.Rounds
 		out.OKs += res.OKs

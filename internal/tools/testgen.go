@@ -24,6 +24,19 @@ func (TestGenTool) Schema() string {
 }
 
 func (t *TestGenTool) Run(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.run(ctx, args, nil)
+}
+
+// Stream runs the test suite, reporting output as it goes.
+//
+// A five-minute test run is the clearest case of silence reading as a hang:
+// there is no other signal that anything is happening, and cancelling is the
+// obvious response. Stream returns exactly what Run would have.
+func (t *TestGenTool) Stream(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
+	return t.run(ctx, args, emit)
+}
+
+func (t *TestGenTool) run(ctx context.Context, args json.RawMessage, emit func(string)) (string, error) {
 	var a struct {
 		Path string `json:"path"`
 		Run  string `json:"run"`
@@ -59,14 +72,11 @@ func (t *TestGenTool) Run(ctx context.Context, args json.RawMessage) (string, er
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = proj.Root
-	out, err := cmd.CombinedOutput()
-	if len(out) > maxOutBytes {
-		out = append(out[:maxOutBytes], []byte("\n…(truncated)")...)
+	res := execStream(ctx, cmd, emit, maxOutBytes)
+	if res.err != nil {
+		return string(res.out), fmt.Errorf("tests failed: %v", res.err)
 	}
-	if err != nil {
-		return string(out), fmt.Errorf("tests failed: %v", err)
-	}
-	return string(out), nil
+	return string(res.out), nil
 }
 
 // filterArgs converts a test-name filter into runner-native flags.

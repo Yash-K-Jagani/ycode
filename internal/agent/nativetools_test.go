@@ -356,6 +356,51 @@ func TestNativeCallToAForbiddenToolIsRefused(t *testing.T) {
 
 // --- helpers ---
 
+// Ollama's protocol has no call ids, so a native call arrives with neither an
+// ID nor a text tag. This is the case a rule derived from the id would
+// misclassify as text-protocol and answer with a message shape Ollama rejects.
+func TestNativeCallWithNoIDIsStillNative(t *testing.T) {
+	p := &toolProvider{
+		calls: []apitypes.ToolCall{{Name: "echo", Args: json.RawMessage(`{"x":"1"}`)}},
+	}
+	res, err := RunWithRounds(context.Background(), p, "m", one, reg(),
+		[]string{"echo"}, nil, io.Discard, nil, 4, "build")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Calls != 1 || res.OKs != 1 {
+		t.Fatalf("Calls=%d OKs=%d", res.Calls, res.OKs)
+	}
+	// A native call must be executed, and its result must not be the tagged
+	// text-protocol shape.
+	var sawTool bool
+	for _, m := range p.lastMsgs {
+		if m.Role == apitypes.RoleTool {
+			sawTool = true
+			if strings.Contains(m.Content, "<tool_result:") {
+				t.Fatalf("an idless native call got the text-protocol result shape: %q", m.Content)
+			}
+		}
+	}
+	if !sawTool {
+		t.Fatalf("no role:tool message: %+v", p.lastMsgs)
+	}
+	// And the assistant's calls still have to be carried forward, id or no id.
+	carried := false
+	for _, m := range p.lastMsgs {
+		if m.Role == apitypes.RoleAssistant {
+			for _, part := range m.Parts {
+				if part.Type == apitypes.PartToolCall {
+					carried = true
+				}
+			}
+		}
+	}
+	if !carried {
+		t.Fatal("an idless native call was not carried into the next request")
+	}
+}
+
 func TestNativeCallsConvertsAndDefaultsArgs(t *testing.T) {
 	if nativeCalls(nil) != nil {
 		t.Fatal("nil in must give nil out, so the caller falls back to tag parsing")
@@ -380,13 +425,22 @@ func TestNativeCallsConvertsAndDefaultsArgs(t *testing.T) {
 	}
 }
 
-func TestCallNativeIsKeyedOnTheID(t *testing.T) {
-	// Keyed on the id rather than a flag, so the two cannot disagree.
-	if (Call{Name: "x"}).native() {
-		t.Fatal("a call with no id claims to be native")
+// native is set in exactly one place, so provenance cannot drift from the data.
+// It is deliberately not derived from ID: Ollama sends native calls with no id
+// at all, so the two are genuinely independent.
+func TestCallNativeIsIndependentOfTheID(t *testing.T) {
+	if (Call{Name: "x"}).native {
+		t.Fatal("a parsed tag claims to be native")
 	}
-	if !(Call{Name: "x", ID: "c"}).native() {
-		t.Fatal("a call with an id does not claim to be native")
+	if !(Call{Name: "x", native: true}).native {
+		t.Fatal("a converted call does not claim to be native")
+	}
+	// Native with no id is the Ollama case, and it must still be native.
+	if !(Call{Name: "x", native: true, ID: ""}).native {
+		t.Fatal("a native call with no id was treated as text-protocol")
+	}
+	if (Call{Name: "x", ID: "c"}).native {
+		t.Fatal("an id alone made a call native")
 	}
 }
 

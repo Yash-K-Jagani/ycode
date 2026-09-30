@@ -61,9 +61,35 @@ func (c *Client) ListModels(ctx context.Context) ([]apitypes.ModelInfo, error) {
 	return out, nil
 }
 
+// Stream runs a turn with no tools offered.
+//
+// It delegates rather than duplicating: the retry policy, the idle watchdog and
+// the error messages all live in StreamWithTools, and two copies of those is how
+// two paths start disagreeing about what a daemon error looks like.
 func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Message, w io.Writer) (apitypes.StreamChunk, error) {
-	body, _ := json.Marshal(map[string]any{"model": model, "messages": msgs, "stream": true})
-	req, err := httpx.NewRequest(ctx, "POST", c.Host+"/api/chat", bytes.NewReader(body))
+	return c.StreamWithTools(ctx, model, msgs, nil, w)
+}
+
+// StreamWithTools runs a turn, optionally offering tool schemas.
+//
+// This is where the local models most need it. Small models are the ones that
+// follow a schema poorly when it is prose in a system prompt, and they are also
+// the ones most likely to truncate a long <tool:read>{"path":...}</tool:read>
+// tag. The structured form removes both failure modes.
+func (c *Client) StreamWithTools(ctx context.Context, model string, msgs []apitypes.Message, specs []apitypes.ToolSpec, w io.Writer) (apitypes.StreamChunk, error) {
+	body := map[string]any{
+		"model":    model,
+		"messages": toWire(msgs),
+		"stream":   true,
+	}
+	for k, v := range toolParams(specs) {
+		body[k] = v
+	}
+	encoded, err := json.Marshal(body)
+	if err != nil {
+		return apitypes.StreamChunk{}, fmt.Errorf("ollama: encoding request: %w", err)
+	}
+	req, err := httpx.NewRequest(ctx, "POST", c.Host+"/api/chat", bytes.NewReader(encoded))
 	if err != nil {
 		return apitypes.StreamChunk{}, fmt.Errorf("ollama: %w", err)
 	}
@@ -96,6 +122,7 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 	// answer and the user was told the model had nothing to say.
 	var lines, decoded int
 	var firstBad string
+	calls := newCallCollector()
 	sc := bufio.NewScanner(streamBody)
 	sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 	for sc.Scan() {
@@ -103,6 +130,15 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 		var line struct {
 			Message struct {
 				Content string `json:"content"`
+				// Ollama's tool-call shape. arguments is an object, unlike
+				// OpenAI's string, which is the whole reason this provider needs
+				// its own translation.
+				ToolCalls []struct {
+					Function struct {
+						Name      string          `json:"name"`
+						Arguments json.RawMessage `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
 			Done bool `json:"done"`
 			// Ollama reports real token counts on its final chunk, so the
@@ -126,6 +162,9 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 		if line.Message.Content != "" {
 			full.WriteString(line.Message.Content)
 			_, _ = io.WriteString(w, line.Message.Content)
+		}
+		for i, tc := range line.Message.ToolCalls {
+			calls.add(i, apitypes.ToolCall{Name: tc.Function.Name, Args: tc.Function.Arguments})
 		}
 		if line.Done {
 			break
@@ -151,6 +190,7 @@ func (c *Client) Stream(ctx context.Context, model string, msgs []apitypes.Messa
 		Done:      true,
 		PromptTok: promptTok,
 		ComplTok:  complTok,
+		ToolCalls: calls.calls(),
 	}, nil
 }
 

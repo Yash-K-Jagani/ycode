@@ -337,6 +337,14 @@ schemas move out of the system prompt where they were being reproduced from
 memory, and long arguments stop being truncated or hallucinated — which is where
 small models lose tool calls most often.
 
+It works on **all four providers**, including local Ollama, which is where it
+matters most: small models are the ones that follow a schema poorly when it is
+prose, and the ones most likely to truncate a long tag. Ollama's dialect differs
+from OpenAI's in three ways that each break a direct reuse of the message type —
+tool calls live in `message.tool_calls` rather than a parts array, `arguments` is
+an object rather than a string, and there are no call ids at all — so it gets its
+own translation rather than a shared one.
+
 It is chosen at runtime by capability, not by config: Gemini follows schemas
 natively, some OpenAI-compatible servers do not, and Ollama's support depends on
 the model. Anything that does not support it uses the text protocol, so nothing
@@ -344,14 +352,17 @@ is lost by a provider not implementing it. A tool-less turn (chat mode) sends no
 schemas at all — offering tools the model was never going to call just spends
 prompt tokens on every message.
 
-Two details are easy to get wrong and are covered by tests:
+Three details are easy to get wrong and are covered by tests:
 
 - A native turn whose prose *mentions* a `<tool:...>` tag must not execute it as
   well. Models do both in one message, so the two protocols are kept exclusive
   per turn: a provider reporting calls means tags are not parsed.
 - The assistant's calls must be carried into the next request with the same ids.
   Without them the results refer to nothing, and the provider either rejects the
-  conversation or assumes the tools ran themselves.
+  conversation or assumes the tools ran itself. Ollama has no ids, so provenance
+  is tracked separately from the id rather than derived from it.
+- Native calls must be refused when the mode forbids the tool, exactly as parsed
+  ones are. Structured access to a tool is not a way around the allow-list.
 
 ---
 
@@ -425,16 +436,16 @@ are both given — a speedup with only the "after" is marketing.
 
 | Metric | Value |
 | --- | --- |
-| Packages | 47 |
-| Go source | 21,144 lines across 129 files |
-| Go tests | 18,882 lines across 126 files |
-| Test functions | 742 |
+| Packages | 47 (41 with tests) |
+| Go source | 21,330 lines across 130 files |
+| Go tests | 19,280 lines across 127 files |
+| Test functions | 762 |
 | Benchmarks | 16 |
-| Test-to-source ratio | 0.89 |
+| Test-to-source ratio | 0.90 |
 | Registered tools | 28 built-ins |
 | Slash commands | 29 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 121 |
+| Commits | 122 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a
@@ -516,6 +527,12 @@ the terminal stays usable.
   instead, which is where it belongs anyway.
 - **No benchmark for the tool loop as a whole**, only its parts. A turn's real
   cost is dominated by the model call, which is not ycode's to measure.
+- **One known flaky test**, seen once: `TestExecStreamDoesNotDeadlockOnLargeStderr`
+  in `internal/tools` took 156s under full-suite load and passed in 0.59s
+  standalone and in the next full run. It spawns a Unix shell pipeline on
+  Windows, so it is sensitive to machine load rather than to anything in the
+  code. It is called out here rather than left to be rediscovered as a random red
+  build.
 
 ---
 

@@ -186,35 +186,44 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 		//
 		// Not marked concurrent. A subagent is a model call inside a tool call;
 		// two at once doubles the spend without making the question easier.
-		reg.AddWith(&tools.TaskTool{
-			Delegate: subagent.Delegate(subagent.ToolOptions{
-				Resolve: func() (providers.Provider, string) {
-					p, mdl, err := m.router.Active()
-					if err != nil {
-						return nil, ""
-					}
-					return p, mdl
-				},
-				Registry: reg,
-				Workdir:  workdir,
-				Mode:     string(mode),
-				Agent:    "explorer",
-				Timeout:  3 * time.Minute,
-				Recorder: m.tracer,
-				OnEvent: func(kind, text string) {
-					// Milestones only. Forwarding the subagent's own output would put
-					// its internal chatter into the parent's transcript, which is the
-					// context saving the whole feature exists to provide.
-					if prog == nil {
-						return
-					}
-					switch kind {
-					case "start", "done", "error", "agent":
-						prog.Send(sysMsg("subagent: " + text))
-					}
-				},
-			}),
-		}, false, false)
+		//
+		// Removed rather than left unwired under zero-data-leak: task is in the
+		// catalog, so skipping the wiring would leave a stub whose error says the
+		// feature is broken rather than that it does not apply. The only delegable
+		// tool that reaches the network is browser.
+		if zdl {
+			reg.Remove(tools.TaskTool{}.Name())
+		} else {
+			reg.AddWith(&tools.TaskTool{
+				Delegate: subagent.Delegate(subagent.ToolOptions{
+					Resolve: func() (providers.Provider, string) {
+						p, mdl, err := m.router.Active()
+						if err != nil {
+							return nil, ""
+						}
+						return p, mdl
+					},
+					Registry: reg,
+					Workdir:  workdir,
+					Mode:     string(mode),
+					Agent:    "explorer",
+					Timeout:  3 * time.Minute,
+					Recorder: m.tracer,
+					OnEvent: func(kind, text string) {
+						// Milestones only. Forwarding the subagent's own output would put
+						// its internal chatter into the parent's transcript, which is the
+						// context saving the whole feature exists to provide.
+						if prog == nil {
+							return
+						}
+						switch kind {
+						case "start", "done", "error", "agent":
+							prog.Send(sysMsg("subagent: " + text))
+						}
+					},
+				}),
+			}, false, false)
+		}
 		onTool := func(name, args, result string, err error) {
 			// Recorded before anything else so the trace shows the call even if
 			// the turn is cancelled or the UI never renders a card for it.

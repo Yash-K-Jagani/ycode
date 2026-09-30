@@ -186,6 +186,9 @@ func runTurn(ctx context.Context, cfg config.Config, prompt string, o Options) (
 		return "", fmt.Errorf("unknown agent %q", o.Agent)
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
+	// Wired so an unattended run can delegate too; see task.go for why it is
+	// omitted under zero-data-leak.
+	addTaskTool(reg, r, cfg, o)
 	allowed := modes.AllowedTools(o.Mode)
 	sys := agent.BuildSystem(agent.SystemOptions{
 		Mode:     o.Mode,
@@ -339,6 +342,10 @@ func runGoal(ctx context.Context, cfg config.Config, prompt string, o Options) (
 		return "", OutcomeUnverified, fmt.Errorf("unknown agent %q", o.Agent)
 	}
 	reg := tools.DefaultRegistry(o.Workdir)
+	// The goal loop builds its own registry, so the delegate has to be wired here
+	// too or an unattended goal run - the longest-running thing ycode does - would
+	// be the one place that cannot delegate.
+	addTaskTool(reg, r, cfg, o)
 	allowed := modes.AllowedTools(o.Mode)
 	// The goal block is part of the prompt, so it goes through the shared
 	// builder: the headless goal run and the TUI goal run should show the

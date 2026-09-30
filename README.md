@@ -215,6 +215,8 @@ exited 0.
 | `/status` | Mode, tokens, cost today, cache hits, RAG index, latency |
 | `/budget [usd]` | Show the daily spend limit and today's spend, or set it (`/budget 1.50`, `/budget 0` for none). Turns are refused once the limit is reached |
 | `/debug [turn\|full\|list\|clear]` | Trace the last turn: the prompt, tool calls with arguments and results, token breakdown, and every routing decision |
+| `/move <dir>` | Work in a different directory. Moves no files — sessions live under `~/.ycode` — and rebuilds the tool registry so writes follow. Earlier paths in the conversation still refer to the old tree |
+| `/different [models…] [full]` | Re-ask the last question to several models and show the answers side by side, with per-row token cost and latency. With no arguments, compares the active provider plus every other one you have a key for |
 | `/connect` | Interactive window: provider → API key/host → model picker |
 | `/doctor` | Health check: tools, Ollama, RAG, cache, model advice |
 | `/agent [name]` | Pick builder/planner/reviewer |
@@ -414,6 +416,12 @@ default, and answers are capped at 8KB so a subagent cannot defeat its own
 purpose by returning a wall of text. Progress appears as `subagent:` lines, and
 `/debug` shows the question it was asked.
 
+Works headlessly too — `ycode run --mode build` and unattended goal runs can
+delegate, which they could not when the feature first landed. Under
+`zero_data_leak` the delegate is removed from the registry entirely rather than
+left unwired, so a local-only user does not get "not available in this context"
+and conclude the feature is broken.
+
 - **Skills** (`~/.ycode/skills/<name>/SKILL.md`): install from git/`owner/repo`/dir,
   `run` injects into the next turn, `export`/`import` zip-shares. Docs: `docs/skills.md`.
 - **Plugins** (`~/.ycode/plugins/<name>/plugin.json` + command): run as tools,
@@ -467,15 +475,15 @@ are both given — a speedup with only the "after" is marketing.
 | Metric | Value |
 | --- | --- |
 | Packages | 47 (45 with tests) |
-| Go source | 22,235 lines across 135 files |
-| Go tests | 20,000 lines across 130 files |
-| Test functions | 809 |
+| Go source | 22,791 lines across 138 files |
+| Go tests | 20,640 lines across 133 files |
+| Test functions | 842 |
 | Benchmarks | 16 |
 | Test-to-source ratio | 0.90 |
 | Registered tools | 29 built-ins |
-| Slash commands | 29 |
+| Slash commands | 31 |
 | Providers | 4 (1 local, 3 cloud) |
-| Commits | 124 |
+| Commits | 128 |
 
 Test lines are close to source lines on purpose. Most of what is here is
 behaviour that is invisible until it breaks: a provider that returns HTML, a

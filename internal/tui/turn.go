@@ -74,6 +74,12 @@ func (m *Model) startTurn(text string, o turnOpts) tea.Cmd {
 	if m.budgetExceeded() {
 		return nil
 	}
+	// Recorded for /different, which re-asks this of several models. Only for a
+	// real turn: an auto turn is a goal continuation, and comparing those would be
+	// meaningless.
+	if !o.auto && strings.TrimSpace(text) != "" {
+		m.lastPrompt = text
+	}
 	if !o.auto {
 		m.sess.Messages = append(m.sess.Messages, apitypes.Message{Role: apitypes.RoleUser, Content: text})
 	}

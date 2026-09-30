@@ -359,6 +359,28 @@ func slashRegistry() map[string]slashHandler {
 			}
 			return selectModel(m, entries, args), nil
 		},
+		"/different": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
+			// Ask several models the same question and put the answers side by
+			// side. Model choice is otherwise guesswork: the only way to compare is
+			// to write the prompt once per model by hand and remember which answer
+			// came from where.
+			//
+			// The arguments are always models. The question is the last thing the
+			// user asked, so it is compared without having to be retyped - and
+			// retyping it is how the two prompts end up subtly different and the
+			// comparison means nothing.
+			fields := strings.Fields(args)
+			full := false
+			if n := len(fields); n > 0 && fields[n-1] == "full" {
+				full = true
+				fields = fields[:n-1]
+			}
+			if m.lastPrompt == "" {
+				return "nothing to compare yet — ask something first, then /different\n" +
+					"  usage: /different [gemini groq ollama/my-model] [full]", nil
+			}
+			return runComparison(ctx, m, m.lastPrompt, fields, full)
+		},
 		"/move": func(ctx context.Context, m *Model, args string) (string, tea.Cmd) {
 			// Changes which tree the tools read and write. Moves no files -
 			// sessions live under ~/.ycode keyed by id - which the output says,

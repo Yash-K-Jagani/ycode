@@ -70,6 +70,11 @@ type Model struct {
 	// callers never have to check for nil before asking.
 	budget *cost.Budget
 
+	// lastPrompt is the most recent non-slash thing the user asked, kept so
+	// /different can re-ask it of several models without the prompt being retyped
+	// and subtly changed between rows.
+	lastPrompt string
+
 	// tracer records the last few turns for /debug: request, response, tool
 	// calls, usage and routing decisions. See internal/trace.
 	tracer *trace.Recorder

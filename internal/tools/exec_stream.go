@@ -76,30 +76,29 @@ func execStream(ctx context.Context, cmd *exec.Cmd, emit func(string), maxOut in
 	// A pipe rather than a temp file: stdout and stderr must be interleaved in
 	// real time, and CombinedOutput does this by creating a pipe and draining
 	// it on another goroutine. Same shape, but with the reader exposed.
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		// Fall back to buffering rather than failing the call: a tool that
-		// cannot stream should still work.
-		out, runErr := cmd.CombinedOutput()
-		if len(out) > maxOut {
-			out = append(out[:maxOut], []byte("\n…(truncated)")...)
-		}
-		if emit != nil && len(out) > 0 {
-			emit(string(out))
-		}
-		return streamResult{out: out, err: runErr, timedOut: ctx.Err() == context.DeadlineExceeded}
-	}
-	// Same trick for stderr, so the two are not read sequentially and deadlock
-	// when the second one fills its pipe buffer.
-	errPipe, err := cmd.StderrPipe()
-	if err != nil {
-		errPipe = nil
-	}
-	if cmd.Stdin == nil {
-		// A command that reads stdin would otherwise block forever waiting for
-		// a terminal that is not there.
-		cmd.Stdin = nil
-	}
+	// Our own pipes, with cmd given the write ends.
+	//
+	// StdoutPipe is the obvious choice and is wrong here. Its documentation says
+	// it is incorrect to call Wait before all reads from the pipe have completed,
+	// because Wait closes the read end once the process exits. A command that
+	// writes and exits immediately - `printf "before"; exit 3` - can lose its
+	// output to that race, and that is exactly what CI saw: the exit code came
+	// back and everything printed before it was gone. WaitDelay only widened the
+	// window; it did not close it.
+	//
+	// Handing cmd an io.Pipe writer instead means Wait also waits for Go's own
+	// copy goroutines, so the child's output has reached us before Wait returns.
+	// Nothing races, and the "cannot stream" fallback disappears along with the
+	// possibility, because io.Pipe does not fail.
+	outR, outW := io.Pipe()
+	errR, errW := io.Pipe()
+	cmd.Stdout = outW
+	// Both streams are drained concurrently below, so neither can fill its pipe
+	// buffer while the other is being read.
+	cmd.Stderr = errW
+	// A command that reads stdin would otherwise block forever waiting for a
+	// terminal that is not there.
+	cmd.Stdin = nil
 
 	if err := cmd.Start(); err != nil {
 		return streamResult{err: err, timedOut: ctx.Err() == context.DeadlineExceeded}
@@ -170,23 +169,25 @@ func execStream(ctx context.Context, cmd *exec.Cmd, emit func(string), maxOut in
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); drain(pipe) }()
-	if errPipe != nil {
-		go func() { defer wg.Done(); drain(errPipe) }()
-	} else {
-		wg.Done()
-	}
+	go func() { defer wg.Done(); drain(outR) }()
+	go func() { defer wg.Done(); drain(errR) }()
+
+	// Wait reaps the process and, because cmd owns the copy goroutines now,
+	// waits for them too - so by the time it returns the child's output has
+	// already been handed to us.
+	//
+	// A child that exits while leaving its pipes open, such as one that spawned a
+	// background grandchild holding the fds, is still bounded by WaitDelay, which
+	// closes them from our side rather than letting this block.
 	waitErr := cmd.Wait()
-	// A stalled pipe is the one case where the drain goroutines may not return
-	// promptly, and waiting on them unconditionally would reintroduce the hang
-	// WaitDelay exists to prevent. Everything read so far is already in buf, so
-	// giving up here loses trailing output rather than the turn.
-	drained := make(chan struct{})
-	go func() { wg.Wait(); close(drained) }()
-	select {
-	case <-drained:
-	case <-time.After(waitDelay):
-	}
+
+	// Wait does not close the writers it was handed, so the readers above would
+	// wait forever for an EOF that never comes. Closing them is what ends the
+	// drains, and it is safe now precisely because Wait has finished copying:
+	// there is nothing in flight.
+	_ = outW.Close()
+	_ = errW.Close()
+	wg.Wait()
 
 	mu.Lock()
 	out := append([]byte(nil), buf.Bytes()...)
